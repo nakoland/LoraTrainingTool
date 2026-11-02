@@ -1,0 +1,23 @@
+# 설치가 받는 것
+/sd-scripts/
+/tools/
+__pycache__/
+
+# 사용자 설정: install.bat 이 templates/ 로 만든다
+/moss_lora_32gb.toml
+/dataset.toml
+/prompts.txt
+/profiles/
+
+# 학습 자료와 결과
+/datasets/
+/models/
+/output/
+/logs/
+/ui_logs/
+/.preview_cache/
+/.moss_ui_state.json
+/.moss_stop_request
+*.safetensors
+*.ckpt
+*.npz

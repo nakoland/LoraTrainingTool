@@ -1,0 +1,2199 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOSS LoRA 학습</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #121211;
+  --surface-1: #1a1a19;
+  --surface-2: #222220;
+  --surface-3: #2c2c29;
+  --line: #34342f;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #8d8c83;
+  --accent: #3987e5;
+  --accent-ink: #ffffff;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --good: #3fae6a;
+  --warn: #d9a21b;
+  --bad: #e66767;
+  --info: #7fa7d9;
+  --mono: "Cascadia Mono", Consolas, "D2Coding", monospace;
+  --sans: "Malgun Gothic", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text-primary); font: 13px/1.5 var(--sans); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+/* 상단 */
+header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; background: var(--surface-1); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 700; letter-spacing: .2px; white-space: nowrap; }
+header .spacer { flex: 1; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--surface-3); color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.pill.run .dot { background: var(--good); box-shadow: 0 0 0 3px #3fae6a33; animation: pulse 1.6s infinite; }
+.pill.fail .dot { background: var(--bad); }
+.pill.done .dot { background: var(--info); }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px #3fae6a11; } }
+.btn { border: 1px solid var(--line); background: var(--surface-2); padding: 6px 12px; border-radius: 6px; white-space: nowrap; }
+.btn:hover { background: var(--surface-3); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger { border-color: #e6676766; color: #ffb3b3; }
+.btn.small { padding: 2px 8px; font-size: 12px; }
+.dirty-mark { color: var(--warn); font-size: 12px; display: none; }
+.dirty .dirty-mark { display: inline; }
+select.cfg-select { background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; max-width: 260px; }
+.cfg-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.saveas { display: inline-flex; gap: 6px; align-items: center; }
+.saveas[hidden] { display: none; }
+.saveas input { width: 190px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+
+/* 레이아웃: 헤더 → 진행 막대(학습 중) → 가로 탭 → 탭 내용(이 부분만 스크롤) */
+body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+#topbar { height: 5px; background: var(--surface-3); flex: none; display: none; }
+#topbar.on { display: block; }
+#topbar > div { height: 100%; width: 0; background: var(--good); transition: width .4s; }
+.maintabs { flex: none; padding: 0 12px; }
+.maintabs .tab { padding: 10px 14px; font-size: 13.5px; display: inline-flex; align-items: center; gap: 6px; }
+.maintabs .tab .key { font-size: 10.5px; color: var(--text-muted); opacity: .7; }
+.tb { font-size: 11px; border-radius: 8px; padding: 0 6px; line-height: 16px; display: none; }
+.tb.err { display: inline-block; background: #e6676733; color: #ffb3b3; }
+.tb.warn { display: inline-block; background: #d9a21b33; color: #f1d58a; }
+.tb.n { display: inline-block; background: var(--surface-3); color: var(--text-secondary); }
+.tdirty { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); display: none; }
+.tab.dirty .tdirty { display: inline-block; }
+main { flex: 1; overflow: auto; min-height: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 12px; align-items: start; }
+.grid .card { margin: 0; }
+.grid-stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ds-layout { display: grid; grid-template-columns: minmax(420px, 5fr) minmax(440px, 6fr); gap: 12px; align-items: start; }
+.ds-layout > #picker { position: sticky; top: 0; }
+.tab-issues .issues { margin-bottom: 12px; }
+@media (max-width: 1000px) {
+  .grid, .ds-layout, .pv-layout { grid-template-columns: 1fr; }
+  .ds-layout > #picker, .pv-left { position: static; }
+}
+
+/* 설정 카드 */
+.card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px; }
+.card > summary { list-style: none; padding: 9px 12px; font-weight: 700; display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.card > summary::-webkit-details-marker { display: none; }
+.card > summary::before { content: "▸"; color: var(--text-muted); transition: transform .15s; display: inline-block; }
+.card[open] > summary::before { transform: rotate(90deg); }
+.card > summary .sub { font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: auto; }
+.card > .ch { padding: 9px 12px; font-weight: 700; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--surface-3); margin-bottom: 4px; }
+.card > .ch .sub { font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: auto; }
+.card .body { padding: 2px 12px 12px; }
+.row { display: grid; grid-template-columns: 148px 1fr; gap: 8px; align-items: center; margin: 6px 0; }
+.row > label { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.row > label code { color: var(--text-muted); font-size: 11px; display: block; font-family: var(--mono); }
+.row.changed > label { color: var(--warn); }
+.row.off, .row.off + .help { opacity: .5; }
+.ctl { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.ctl input[type=text], .ctl select, .ctl textarea { flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; }
+.ctl textarea { font-family: var(--mono); font-size: 12px; resize: vertical; min-height: 54px; }
+.ctl input:focus, .ctl select:focus, .ctl textarea:focus { outline: 2px solid #3987e566; border-color: var(--accent); }
+.ctl input.num { max-width: 140px; font-family: var(--mono); }
+.estimate { margin: 2px 0 8px 156px; padding: 6px 8px; border-left: 3px solid var(--accent); border-radius: 4px; background: var(--surface-2); font-size: 12px; color: var(--text-secondary); }
+.estimate b { color: var(--text-primary); }
+.memtable { width: 100%; border-collapse: collapse; }
+.memtable th, .memtable td { padding: 4px 6px; border-bottom: 1px solid var(--surface-3); text-align: right; font-variant-numeric: tabular-nums; }
+.memtable th { font-weight: 400; color: var(--text-muted); font-size: 11.5px; }
+.memtable th:first-child, .memtable td:first-child { text-align: left; }
+.hint { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; margin-left: 5px; border: 1px solid var(--line); border-radius: 50%; font-size: 10px; font-weight: 400; color: var(--text-muted); cursor: help; }
+#pane-output.on { display: flex; flex-direction: column; height: 100%; min-height: 560px; padding-bottom: 12px; }
+#grid-output { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: stretch; gap: 12px; }
+.outstrip { flex: none; padding: 10px 14px; }
+.out-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
+.ofld { display: flex; flex-direction: column; gap: 2px; }
+.ofld > label { display: flex; align-items: center; font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.ofld.changed > label { color: var(--warn); }
+.ofld .ctl input { width: 110px; }
+.ofld.name .ctl input { width: 200px; }
+.ofld.format select { width: 130px; }
+.ofld.sw { flex-direction: row; align-items: center; gap: 6px; padding-bottom: 5px; }
+.ofld.sw > label { font-size: 12px; color: var(--text-secondary); }
+.osep { width: 1px; height: 36px; background: var(--line); }
+.out-fields .spacer { flex: 1; }
+.out-summary { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--surface-3); font: 11.5px var(--mono); color: var(--text-muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.out-summary .bad { color: var(--bad); }
+.out-paths { margin-top: 6px; }
+.prompt-section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.prompt-section > .ch .sub { margin-left: 0; }
+.prompt-section > .ch .spacer { flex: 1; }
+.prompt-layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); grid-template-rows: minmax(0, 1fr); gap: 16px; }
+#promptList { height: 100%; overflow: auto; }
+.pcard { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; background: var(--surface-2); }
+.pcard.active { border-color: var(--accent); }
+.pcard-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pcard.active .pcard-head { margin-bottom: 6px; }
+.pcard-head .spacer { flex: 1; }
+.pcard-head b { flex: none; }
+.pcard-head .target { display: none; font-size: 11px; color: #cfe2fb; background: #3987e522; border-radius: 4px; padding: 1px 6px; }
+.pcard.active .target { display: inline; }
+.pcard:not(.active) { cursor: pointer; }
+.pmini { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; color: var(--text-secondary); }
+.pmeta { flex: none; font-size: 11px; color: var(--text-muted); }
+.pcard.active .pmini, .pcard.active .pmeta, .pcard:not(.active) .pbody, .pcard:not(.active) .pcard-btns, .pcard:not(.active) .spacer { display: none; }
+.pcard-btns { display: flex; gap: 6px; }
+#gallery { display: flex; flex-direction: column; min-height: 0; }
+#gallery .ggrid { max-height: none; overflow: visible; }
+.gscroll { flex: 1; min-height: 0; overflow: auto; }  /* 높이가 정해진 격자는 행이 눌려 겹치므로 스크롤은 바깥에서 한다 */
+#gallery .gsel { flex: none; }
+.pf { margin-bottom: 6px; min-width: 0; }
+.pf .lbl, .psizes .lbl { display: block; font-size: 11.5px; color: var(--text-secondary); margin-bottom: 2px; }
+.pf .ctl textarea { min-height: 0; font-family: var(--sans); font-size: 12.5px; background: var(--surface-1); }
+.pf .ctl input[type=text] { background: var(--surface-1); }
+.pf .spin { flex: 1 1 auto; }
+.psizes { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
+.psizes .lbl { margin: 0 6px 0 0; }
+.psizes .btn.on { border-color: var(--accent); color: #cfe2fb; background: #3987e522; }
+.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 0 10px; }
+.ghead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.ghead .sub { font-size: 11.5px; color: var(--text-muted); }
+.gtools { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.gtools input, .gtools select { flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 4px 7px; font-size: 12px; }
+.gtools .gname { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+.ggrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; max-height: 520px; overflow: auto; padding: 2px; }
+.gtile { padding: 0; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; background: var(--surface-2); }
+.gtile:hover { border-color: var(--text-muted); }
+.gtile.on { outline: 2px solid var(--accent); }
+.gtile.nocap { opacity: .4; }
+.gtile img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.resume { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.resume label { flex: none; font-size: 12px; color: var(--text-secondary); }
+.resume select { flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 6px 7px; }
+.resume-warn { margin-bottom: 6px; font-size: 12px; color: #f0cc75; }
+.pv-layout { display: grid; grid-template-columns: minmax(300px, 4fr) minmax(460px, 7fr); gap: 12px; align-items: start; }
+.pv-left { position: sticky; top: 0; display: flex; flex-direction: column; height: calc(100vh - 150px); min-height: 460px; padding: 10px; background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; }
+.pv-scroll { flex: 1; min-height: 0; overflow: auto; }  /* 높이가 정해진 격자는 행이 눌려 겹치므로 스크롤은 바깥에서 한다 */
+.pv-left .ggrid { max-height: none; overflow: visible; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+.pv-info { padding: 10px 12px; margin-bottom: 10px; background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; }
+.pv-name { font-weight: 600; overflow-wrap: anywhere; }
+.pv-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.pv-flow b { color: var(--text-primary); }
+.pv-flow .arrow { color: var(--text-muted); }
+.pv-set { margin-top: 3px; font-size: 11.5px; color: var(--text-muted); }
+.pv-card { display: block; width: 100%; padding: 0; margin-bottom: 10px; text-align: left; background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: zoom-in; }
+.pv-card:hover { border-color: var(--text-muted); }
+.pv-card .head { display: flex; justify-content: space-between; gap: 8px; padding: 7px 12px; font-size: 12.5px; color: var(--text-primary); border-bottom: 1px solid var(--line); }
+.pv-card .head span { color: var(--text-muted); font-size: 11.5px; }
+.pv-one { display: flex; justify-content: center; padding: 8px; background: #0b0b0a; }
+.pv-one img { display: block; max-width: 100%; height: 46vh; min-height: 240px; object-fit: contain; }
+.pv-three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; background: #0b0b0a; }
+.pv-three figure { margin: 0; padding: 6px; min-width: 0; }
+.pv-three figcaption { margin-bottom: 4px; font-size: 11.5px; color: var(--text-secondary); }
+.pv-three img, .pv-three .pv-wait { display: block; width: 100%; height: 24vh; min-height: 130px; object-fit: contain; }
+.pv-three .pv-wait { display: flex; align-items: center; justify-content: center; text-align: center; font-size: 12px; color: var(--text-muted); border: 1px dashed var(--line); border-radius: 5px; }
+#viewer { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: #0b0b0a; color: #eee; user-select: none; }
+#viewer[hidden] { display: none; }
+.vw-panes { flex: 1; display: flex; gap: 2px; min-height: 0; cursor: grab; }
+#viewer.drag .vw-panes { cursor: grabbing; }
+.vw-pane { position: relative; flex: 1; min-width: 0; background: #0b0b0a; }
+.vw-pane canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.vw-label { position: absolute; top: 8px; left: 8px; padding: 3px 8px; font-size: 13px; background: #000a; border-radius: 4px; pointer-events: none; }
+.vw-label span { color: #bbb; font-size: 12px; margin-left: 6px; }
+.vw-msg { position: absolute; left: 12px; right: 12px; top: 50%; text-align: center; font-size: 14px; color: #ddd; pointer-events: none; overflow-wrap: anywhere; }
+.vw-hud { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); padding: 4px 12px; font-size: 12.5px; white-space: nowrap; background: #000a; border-radius: 6px; pointer-events: none; }
+.vw-hud b { margin-right: 10px; font-variant-numeric: tabular-nums; }
+.gmore { grid-column: 1 / -1; }
+.gsel { margin-top: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); font-size: 12px; }
+.gsel-head { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.gsel-head b { font-weight: 400; font-family: var(--mono); color: var(--text-secondary); margin-right: 6px; word-break: break-all; }
+.gsel-head .btn.on { border-color: var(--accent); color: #cfe2fb; }
+.gcap { max-height: 90px; overflow: auto; white-space: pre-wrap; color: var(--text-secondary); }
+@media (max-width: 1000px) {
+  .prompt-layout { grid-template-columns: 1fr; grid-template-rows: none; }
+  .estimate { margin-left: 0; }
+  #pane-output.on { height: auto; }
+  #promptList { height: auto; }
+  .gscroll { max-height: 520px; }
+}
+.spin { position: relative; flex: 0 0 130px; display: block; }
+.ctl .spin input.num { width: 100%; max-width: none; padding-right: 26px; text-align: center; }
+.spinbtns { position: absolute; top: 3px; bottom: 3px; right: 3px; width: 19px; display: flex; flex-direction: column; gap: 1px; }
+.spinbtns button { flex: 1; min-height: 0; padding: 0; border: 0; border-radius: 2px; display: flex; align-items: center; justify-content: center; background: var(--surface-3); color: var(--text-secondary); }
+.spinbtns button:hover { background: #45453f; color: var(--text-primary); }
+.spinbtns button:active { background: var(--accent); color: var(--accent-ink); }
+.lrslider { position: relative; flex: 1; min-width: 140px; max-width: 380px; padding-bottom: 16px; margin-left: 6px; }
+.lrslider input[type=range] { display: block; width: 100%; margin: 0; accent-color: var(--accent); }
+.lrslider .ticks button { position: absolute; bottom: 0; transform: translateX(-50%); background: none; border: 0; padding: 0; color: var(--text-muted); font: 11px var(--mono); }
+.lrslider .ticks button::before { content: ""; position: absolute; left: 50%; top: -5px; width: 1px; height: 4px; background: var(--text-muted); }
+.lrslider .ticks button:hover { color: var(--text-primary); }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+.badge.ok { background: #3fae6a22; color: #8fd8a8; }
+.badge.bad { background: #e6676722; color: #ffb3b3; }
+.badge.note { background: #7fa7d922; color: #b8d0ee; }
+.badge.warn { background: #d9a21b22; color: #f0cc75; }
+.help { color: var(--text-muted); font-size: 11.5px; margin: -2px 0 6px 156px; }
+.switch { position: relative; width: 34px; height: 18px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+.switch span { position: absolute; inset: 0; background: var(--surface-3); border-radius: 9px; border: 1px solid var(--line); transition: .15s; }
+.switch span::after { content: ""; position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--text-muted); transition: .15s; }
+.switch input:checked + span { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + span::after { left: 18px; background: #fff; }
+.switch input:focus-visible + span { outline: 2px solid #3987e599; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.presets .btn { font-size: 12px; padding: 3px 9px; }
+.presets .btn.on { border-color: var(--accent); color: #cfe2fb; background: #3987e522; }
+.presets .plabel { align-self: center; margin-right: 4px; font-size: 12px; color: var(--text-secondary); }
+
+/* 오른쪽 */
+.progress-strip { padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--surface-1); }
+.prog-top { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; }
+.stat .k { font-size: 11px; color: var(--text-muted); }
+.stat .v { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+.remain { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; padding: 6px 14px; border: 1px solid var(--accent); border-radius: 8px; background: #3987e51f; }
+.remain .k { font-size: 12px; color: var(--text-secondary); }
+.remain .v { font-size: 30px; line-height: 1.15; font-weight: 700; font-variant-numeric: tabular-nums; }
+.remain .finish { font-size: 12px; color: var(--text-secondary); }
+.meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 18px; margin-top: 12px; }
+.meter .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 12px; color: var(--text-secondary); }
+.meter .top b { font-size: 14px; color: var(--level, var(--text-primary)); font-variant-numeric: tabular-nums; }
+.meter .sub { font-size: 11.5px; color: var(--text-muted); margin-top: 3px; min-height: 16px; }
+.meter .sub.warn { color: #f0cc75; }
+.meter .track { height: 6px; background: var(--surface-3); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+.meter .fill { height: 100%; background: var(--level, var(--accent)); border-radius: 3px; transition: width .4s; }
+.bar { position: relative; height: 16px; background: var(--surface-3); border-radius: 4px; margin-top: 10px; overflow: hidden; }
+#pBar { height: 100%; background: var(--good); width: 0; transition: width .4s; }
+#pTicks span { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--surface-1); }
+.bar-epochs { display: flex; min-height: 16px; margin-top: 2px; font-size: 11px; line-height: 16px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.bar-epochs span { flex: 1 1 0; min-width: 0; text-align: center; }
+.bar-epochs .done { color: var(--text-secondary); }
+.bar-epochs .now { color: var(--good); font-weight: 700; }
+.tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--surface-1); overflow-x: auto; }
+.tab { border: 0; background: none; padding: 9px 12px; color: var(--text-muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+.tab.on { color: var(--text-primary); border-bottom-color: var(--accent); }
+.tab .count { font-size: 11px; background: var(--surface-3); border-radius: 8px; padding: 0 6px; margin-left: 4px; }
+.tab .count.err { background: #e6676733; color: #ffb3b3; }
+.pane { display: none; padding: 14px 16px 40px; }
+.pane.on { display: block; }
+.pane.monitor.on { display: flex; flex-direction: column; height: 100%; min-height: 560px; padding-bottom: 12px; }
+.monitor .progress-strip { flex: none; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px; }
+.logbox { flex: 0 0 clamp(110px, 18vh, 190px); display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-top: 8px; }
+
+.issues { list-style: none; padding: 0; margin: 0 0 14px; }
+.issues li { display: flex; gap: 8px; padding: 7px 10px; border-radius: 6px; margin-bottom: 4px; background: var(--surface-1); border-left: 3px solid var(--line); }
+.issues li .ic { flex: none; font-weight: 700; width: 38px; font-size: 11px; padding-top: 1px; }
+.issues li.error { border-left-color: var(--bad); } .issues li.error .ic { color: var(--bad); }
+.issues li.warn { border-left-color: var(--warn); } .issues li.warn .ic { color: var(--warn); }
+.issues li.info { border-left-color: var(--info); } .issues li.info .ic { color: var(--info); }
+.issues li.okmsg { border-left-color: var(--good); } .issues li.okmsg .ic { color: var(--good); }
+h3 { font-size: 13px; margin: 18px 0 8px; color: var(--text-secondary); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.kpi { background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.kpi .k { font-size: 11px; color: var(--text-muted); }
+.kpi .v { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi .v small { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+.subcard { background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
+.subcard-head { display: flex; align-items: center; gap: 6px; }
+.subcard .path { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--text-secondary); word-break: break-all; }
+.subcard table { border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+.subcard td { padding: 2px 14px 2px 0; }
+.subcard td:first-child { color: var(--text-muted); }
+.subcard details { margin-top: 6px; font-size: 12px; }
+.subcard details ul { margin: 4px 0; padding-left: 18px; max-height: 160px; overflow: auto; font-family: var(--mono); color: var(--text-secondary); }
+.thumbs { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; }
+.thumbs img { height: 72px; border-radius: 4px; border: 1px solid var(--line); cursor: zoom-in; background: var(--surface-2); }
+
+.chart-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--text-secondary); }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+.legend i.dot { width: 8px; height: 8px; border-radius: 50%; }
+.chart-wrap { flex: 1 1 0; min-height: 150px; position: relative; background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; }
+.chart-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.tooltip { position: absolute; pointer-events: none; background: #0b0b0bee; border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 12px; display: none; white-space: nowrap; z-index: 2; }
+.tooltip b { font-variant-numeric: tabular-nums; }
+.empty { color: var(--text-muted); padding: 30px 0; text-align: center; }
+
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.gallery figure { margin: 0; background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: zoom-in; }
+.gallery img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; background: var(--surface-2); }
+.gallery figcaption { font-size: 11px; color: var(--text-muted); padding: 4px 8px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.models { width: 100%; border-collapse: collapse; font-size: 12px; }
+.models th { text-align: left; color: var(--text-muted); font-weight: 400; border-bottom: 1px solid var(--line); padding: 4px 6px; }
+.models td { padding: 5px 6px; border-bottom: 1px solid var(--surface-3); font-variant-numeric: tabular-nums; }
+.models td:first-child { font-family: var(--mono); }
+.hist { margin-top: 18px; }
+.hist-body { padding: 0 12px 12px; }
+.hist-body > .card:last-child { margin-bottom: 0; }
+
+.log-tools { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--text-muted); }
+.log-tools input[type=text] { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; width: 200px; }
+#log { flex: 1; overflow: auto; margin: 0; padding: 10px 12px; font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-all; background: #0e0e0d; color: #d6d5cf; }
+#log .e { color: #ff9b9b; } #log .w { color: #e9c46a; } #log .u { color: #8fbff3; }
+#log-partial { padding: 6px 12px; font: 12px var(--mono); background: #171716; border-top: 1px solid var(--line); color: #a9d6b3; white-space: pre; overflow: hidden; text-overflow: ellipsis; min-height: 28px; }
+pre.cmd { background: #0e0e0d; border: 1px solid var(--line); padding: 10px; border-radius: 6px; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; }
+
+#lightbox { position: fixed; inset: 0; background: #000d; display: none; align-items: center; justify-content: center; z-index: 20; flex-direction: column; gap: 8px; cursor: zoom-out; }
+#lightbox img { max-width: 94vw; max-height: 88vh; }
+#lightbox div { color: var(--text-secondary); font: 12px var(--mono); }
+/* 학습 폴더 선택 */
+.pk { background: var(--surface-1); border: 1px solid var(--line); border-radius: 8px; height: calc(100vh - 150px); min-height: 460px; display: flex; flex-direction: column; overflow: hidden; }
+.pk-head { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.pk-head b { margin-right: 6px; }
+.pk-head input { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; font-family: var(--mono); font-size: 12px; }
+.pk-tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); }
+.pk-body { flex: 1; overflow: auto; padding: 8px 12px; min-height: 0; }
+.pk-group { margin-bottom: 10px; }
+.pk-ghead { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); padding: 4px 0; font-family: var(--mono); }
+.pk-ghead .topic { color: var(--text-primary); font-family: var(--sans); font-weight: 700; font-size: 13px; }
+.pk-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px; cursor: pointer; font-size: 12.5px; }
+.pk-row:hover { background: var(--surface-2); }
+.pk-row.sel { background: #3987e526; outline: 1px solid #3987e599; }
+.pk-row.dim { opacity: .55; }
+.pk-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-row .nm.dir::before { content: "▸ "; color: var(--text-muted); }
+.pk-crumbs { display: flex; flex-wrap: wrap; gap: 2px; font-family: var(--mono); font-size: 12px; margin-bottom: 8px; }
+.pk-crumbs button { background: none; border: 0; color: var(--info); padding: 1px 3px; }
+.pk-detail { border-top: 1px solid var(--line); padding: 10px 12px; background: var(--surface-2); min-height: 120px; }
+.pk-detail .path { font-family: var(--mono); font-size: 12px; word-break: break-all; color: var(--text-secondary); }
+.pk-detail .acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.pk-detail .thumbs img { height: 64px; }
+.verdict { margin-top: 6px; padding: 5px 8px; border-left: 3px solid var(--line); border-radius: 4px; background: var(--surface-1); font-size: 12px; color: var(--text-secondary); }
+.verdict b { display: block; color: var(--text-primary); }
+.verdict.ok { border-left-color: var(--good); }
+.verdict.ok b { color: #8fd8a8; }
+.verdict.warn { border-left-color: var(--warn); }
+.verdict.warn b { color: #f0cc75; }
+.verdict.bad { border-left-color: var(--bad); }
+.verdict.bad b { color: #ffb3b3; }
+.pk-subs { margin-top: 8px; }
+.pk-subs .sum { font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.pk-subs .list { max-height: 150px; overflow: auto; border: 1px solid var(--line); border-radius: 5px; padding: 2px; }
+#toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--surface-3); border: 1px solid var(--line); padding: 8px 14px; border-radius: 8px; display: none; z-index: 30; max-width: 80vw; }
+#toast.err { border-color: var(--bad); color: #ffc9c9; }
+</style>
+</head>
+<body>
+<header id="hdr">
+  <h1>MOSS-Image LoRA 학습</h1>
+  <label class="cfg-label" for="cfgSelect">설정 불러오기</label>
+  <select class="cfg-select" id="cfgSelect" title="고르면 그 설정을 불러옵니다 (학습 설정·데이터셋·샘플 프롬프트)"></select>
+  <button class="btn" id="btnSaveAs" title="현재 설정을 새 이름으로 저장합니다. 지금 파일은 바뀌지 않습니다">다른 이름으로 저장</button>
+  <span class="saveas" id="saveAsBox" hidden>
+    <input type="text" id="saveAsName" placeholder="LoRA 이름" spellcheck="false" maxlength="80">
+    <button class="btn primary" id="saveAsOk">저장</button>
+    <button class="btn" id="saveAsCancel">취소</button>
+  </span>
+  <span class="dirty-mark">● 저장 안 됨</span>
+  <span class="spacer"></span>
+  <span class="pill" id="statusPill"><span class="dot"></span><span id="statusText">대기</span></span>
+  <button class="btn" id="btnReload" title="파일에서 다시 읽기">다시 읽기</button>
+  <button class="btn" id="btnSave" title="Ctrl+S">저장</button>
+  <button class="btn primary" id="btnStart">학습 시작</button>
+  <button class="btn danger" id="btnStop" disabled>중지</button>
+</header>
+<div id="topbar"><div id="topbarFill"></div></div>
+<nav class="tabs maintabs" id="tabs">
+  <button class="tab on" data-pane="dataset">데이터셋<span class="tb" data-tb="dataset"></span><span class="tdirty"></span><span class="key">1</span></button>
+  <button class="tab" data-pane="preview">자료 미리보기<span class="key">2</span></button>
+  <button class="tab" data-pane="train">학습 설정<span class="tb" data-tb="train"></span><span class="tdirty"></span><span class="key">3</span></button>
+  <button class="tab" data-pane="memory">메모리·속도<span class="tb" data-tb="memory"></span><span class="tdirty"></span><span class="key">4</span></button>
+  <button class="tab" data-pane="output">출력·샘플<span class="tb" data-tb="output"></span><span class="tdirty"></span><span class="key">5</span></button>
+  <button class="tab" data-pane="run">실행<span class="tb" data-tb="run"></span><span class="key">6</span></button>
+  <button class="tab" data-pane="monitor">모니터<span class="key">7</span></button>
+  <button class="tab" data-pane="results">결과<span class="tb n" id="sampleCount">0</span><span class="key">8</span></button>
+</nav>
+<main id="main">
+  <div class="pane on" id="pane-dataset">
+    <div class="tab-issues" data-issues="dataset"></div>
+    <div class="ds-layout">
+      <div id="picker">
+        <div class="pk">
+          <div class="pk-head">
+            <b>학습 폴더 선택</b>
+            <input type="text" id="pkRoot" spellcheck="false" style="flex:1;min-width:200px" title="기준 폴더">
+            <button class="btn small" id="pkRootApply">이동</button>
+            <button class="btn small" id="pkRefresh" title="폴더 다시 찾기">새로고침</button>
+            <input type="text" id="pkFilter" placeholder="검색 (폴더 이름)" style="width:100%">
+          </div>
+          <nav class="pk-tabs">
+            <button class="tab on" data-pktab="found">찾은 학습 폴더</button>
+            <button class="tab" data-pktab="browse">폴더 탐색</button>
+          </nav>
+          <div class="pk-body" id="pkBody"></div>
+          <div class="pk-detail" id="pkDetail"></div>
+        </div>
+      </div>
+      <div id="dsRight"></div>
+    </div>
+  </div>
+  <div class="pane" id="pane-preview"><div class="pv-layout"><div class="pv-left" id="pvLeft"></div><div id="pvRight"></div></div></div>
+  <div class="pane" id="pane-train"><div class="tab-issues" data-issues="train"></div><div class="grid" id="grid-train"></div></div>
+  <div class="pane" id="pane-memory"><div class="tab-issues" data-issues="memory"></div><div class="grid" id="grid-memory"></div></div>
+  <div class="pane" id="pane-output"><div class="tab-issues" data-issues="output"></div><div class="grid" id="grid-output"></div></div>
+  <div class="pane" id="pane-run">
+    <div class="grid">
+      <section class="card"><div class="ch">설정 점검<span class="sub">저장된 파일 기준</span><button class="btn small" id="btnCheck">다시 점검</button></div><div class="body" id="runIssues"></div></section>
+      <div>
+        <section class="card"><div class="ch">학습 시작</div><div class="body" id="runStart"></div></section>
+        <section class="card" style="margin-top:12px"><div class="ch">추가 인자<span class="sub">명령줄 덧붙임 · 설정 파일보다 우선</span></div><div class="body">
+          <div class="ctl"><textarea id="extraArgs" rows="2" placeholder="--max_train_steps 500 --save_every_n_steps 100"></textarea></div>
+          <div class="help" style="margin:4px 0 0">이 값은 브라우저에만 기억됩니다.</div></div></section>
+        <section class="card" style="margin-top:12px"><div class="ch">실행 명령</div><div class="body" id="pane-cmd"></div></section>
+      </div>
+    </div>
+  </div>
+  <div class="pane monitor" id="pane-monitor">
+    <div class="progress-strip">
+      <div class="prog-top">
+        <div class="stat"><span class="k">스텝</span><span class="v" id="pStep">–</span></div>
+        <div class="stat"><span class="k">에포크</span><span class="v" id="pEpoch">–</span></div>
+        <div class="stat"><span class="k">평균 loss</span><span class="v" id="pLoss">–</span></div>
+        <div class="stat"><span class="k">속도</span><span class="v" id="pRate">–</span></div>
+        <div class="stat" title="최근 30스텝 평균. 샘플 생성·저장처럼 한 번 크게 튄 구간은 뺍니다"><span class="k">스텝당 시간</span><span class="v" id="pStepTime">–</span></div>
+        <div class="stat"><span class="k">경과</span><span class="v" id="pElapsed">–</span></div>
+        <div class="remain" title="최근 30스텝의 스텝당 시간으로 계산합니다. 에포크마다 하는 샘플 생성·저장 시간은 포함하지 않습니다">
+          <span class="k">남은 시간</span><span class="v" id="pRemain">–</span><span class="finish" id="pFinish"></span>
+        </div>
+      </div>
+      <div class="bar"><div id="pBar"></div><div id="pTicks"></div></div>
+      <div class="bar-epochs" id="pEpochs" title="에포크"></div>
+      <div class="meters" id="meters"></div>
+    </div>
+    <div class="chart-head">
+      <select class="cfg-select" id="runSelect" title="TensorBoard 로그(실행별)"></select>
+      <div class="legend">
+        <span><i style="background:var(--series-1);opacity:.35"></i>loss (스텝)</span>
+        <span><i style="background:var(--series-1)"></i>이동 평균</span>
+        <span><i class="dot" style="background:var(--series-2)"></i>에포크 평균</span>
+      </div>
+      <span class="spacer" style="flex:1"></span>
+      <label style="font-size:12px;color:var(--text-muted)"><input type="checkbox" id="chkLogY"> 로그 눈금</label>
+    </div>
+    <div class="chart-wrap" id="chartWrap"><canvas id="chart"></canvas><div class="tooltip" id="tip"></div></div>
+    <div id="chartInfo" style="margin-top:8px;color:var(--text-muted);font-size:12px"></div>
+    <div class="logbox">
+      <div class="log-tools">
+        <b style="color:var(--text-secondary)">로그</b><span id="logPath"></span><span style="flex:1"></span>
+        <input type="text" id="logFilter" placeholder="필터 (예: error)">
+        <label><input type="checkbox" id="chkFollow" checked> 자동 스크롤</label>
+      </div>
+      <pre id="log"></pre>
+      <div id="log-partial"></div>
+    </div>
+  </div>
+  <div class="pane" id="pane-results"></div>
+</main>
+<div id="viewer" hidden tabindex="-1"><div class="vw-panes" id="vwPanes"></div><div class="vw-hud"><b id="vwZoom">100%</b>WASD·드래그 이동 · 휠 확대/축소 · 우클릭·Esc 닫기</div></div>
+<div id="lightbox"><img alt=""><div></div></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- 스키마
+// t: file|dir|text|int|num|bool|select|lines,  d: 비웠을 때 sd-scripts 기본값(표시용)
+const CFG_GROUPS = [
+  { id: "model", title: "모델", tab: "train", items: [
+    { k: "pretrained_model_name_or_path", l: "DiT", t: "file", h: "공식 샤드면 00001 파일, ComfyUI 단일 파일(bf16/ConvRot INT8) 가능" },
+    { k: "text_encoder", l: "텍스트 인코더", t: "file", h: "Qwen3.5-9B 첫 샤드 또는 qwen3.5_9b_int8_convrot (GPTQ 불가)" },
+    { k: "vae", l: "VAE", t: "file", h: "flux2-vae.safetensors" },
+    { k: "tokenizer_cache_dir", l: "토크나이저 캐시", t: "dir", h: "비우면 Hugging Face 에서 내려받음" },
+  ]},
+  { id: "dataset", title: "데이터 로더·설정 파일", tab: "dataset", items: [
+    { k: "dataset_config", l: "dataset.toml", t: "file" },
+    { k: "max_data_loader_n_workers", l: "로더 작업 수", t: "int", d: "8", h: "학습 데이터를 미리 읽어 두는 보조 프로세스 수. 권장 2 — 더 늘려도 빨라지지 않고 메모리만 더 씁니다. 0 이면 학습 프로세스가 직접 읽으며, 이때는 아래 유지를 꺼야 합니다." },
+    { k: "persistent_data_loader_workers", l: "작업 프로세스 유지", t: "bool", h: "에포크가 끝나도 보조 프로세스를 닫지 않고 다시 씁니다. Windows 에서 끄면 에포크마다 새로 만들어 학습이 몇 배 느려질 수 있으니 켜 두세요(데이터셋이 작을수록 영향이 큽니다). 메모리는 조금 더 쓸 수 있습니다." },
+  ]},
+  { id: "schedule", title: "학습 길이", tab: "train", items: [
+    { k: "max_train_epochs", l: "에포크", t: "int", spin: { min: 1 } },
+  ]},
+  { id: "train", title: "학습", tab: "train", items: [
+    { k: "network_dim", l: "Rank (dim)", t: "int", d: "4" },
+    { k: "network_alpha", l: "Alpha", t: "num", d: "1", h: "LoRA 출력 배율은 alpha ÷ rank 입니다 (32/16 → 0.5, 16/1 → 0.0625). AdamW 에서는 배율과 학습률이 함께 세기를 정합니다. 배율 × 학습률로 보면 sd-scripts 문서 예시 16/1·1e-4 는 6e-6, 32/16·1e-4 는 5e-5, anima_lora 기본값 32/128·5e-5(Muon)는 2e-4 입니다. 4e-4 는 anima_lora 기록에서 프롬프트 세부를 잃은 값입니다(30장 1세트). 공식 권장값은 없습니다." },
+    { k: "learning_rate", l: "학습률", t: "num", spin: { log: true, min: 1e-6, max: 1e-3, base: 1e-4 }, slider: true, h: "슬라이더는 0.00001, 0.0001 근처에서 달라붙습니다. 화살표와 휠은 1→2→…→9→10 순서로 바꿉니다." },
+    { k: "optimizer_type", l: "옵티마이저", t: "select", o: ["AdamW", "AdamW8bit", "Adafactor", "Prodigy", "Lion", "Lion8bit", "PagedAdamW8bit"], d: "AdamW" },
+    { k: "optimizer_args", l: "옵티마이저 인자", t: "lines", h: "한 줄에 하나 — 예) weight_decay=0.01" },
+    { k: "lr_scheduler", l: "스케줄러", t: "select", o: ["constant", "constant_with_warmup", "cosine", "cosine_with_restarts", "linear", "polynomial"], d: "constant" },
+    { k: "lr_warmup_steps", l: "워밍업 (%)", t: "pct", d: "0", spin: { min: 0, max: 99 }, h: "학습 초반에 학습률을 0 에서 목표값까지 올리는 구간을 총 스텝의 % 로 정합니다. constant 스케줄러에서는 쓸 수 없습니다 (constant_with_warmup 을 고르세요)." },
+    { k: "network_train_unet_only", l: "DiT 만 학습", t: "bool", h: "공식 권장: 텍스트 인코더 고정. 끄면 TE 출력 캐시 불가" },
+    { k: "network_module", l: "네트워크", t: "select", o: ["networks.lora_generic", "networks.loha", "networks.lokr"] },
+    { k: "network_args", l: "네트워크 인자", t: "lines", h: "예) exclude_patterns=['.*ffn.*']  /  train_text_embedder=True" },
+    { k: "network_weights", l: "이어서 학습할 LoRA", t: "file", h: "기존 LoRA 가중치에서 시작 (선택)" },
+    { k: "seed", l: "시드", t: "int", spin: { min: 0 } },
+  ]},
+  { id: "timestep", title: "타임스텝", tab: "train", help: "타임스텝은 학습할 때 이미지에 섞는 노이즈의 양입니다. 스텝마다 하나를 뽑아 그 노이즈를 걷어 내도록 학습하므로, 어떤 값을 자주 뽑느냐가 학습의 배분을 정합니다. 노이즈가 많은 쪽은 주로 전체 구도, 적은 쪽은 세부 묘사에 영향을 줍니다. 잘 모르겠으면 '사전학습 재현' 프리셋을 쓰세요.", items: [
+    { k: "timestep_sampling", l: "샘플링", t: "select", o: ["sigma", "uniform", "sigmoid", "shift", "flux_shift", "truncated_logit_normal"], d: "sigmoid", h: "타임스텝을 뽑는 분포. truncated_logit_normal: MOSS 사전학습 분포 재현(노이즈 많은 쪽 비중이 큼). shift: 더 간단하고 비슷한 분포(flow shift 3.0 과 함께). sigmoid: 기본값, 중간에 몰려 사전학습 분포와 꽤 다름. uniform: 전 구간 고르게. sigma: 아래 loss 가중과 함께 분포를 정함. flux_shift: 해상도에 따라 이동량을 자동으로 정하는 FLUX 방식." },
+    { k: "logit_mean", l: "logit_mean", t: "num", d: "0", h: "분포의 중심. 음수일수록 노이즈 많은 쪽으로 치우칩니다. 사전학습 값은 -1.09. truncated_logit_normal, 또는 sigma + loss 가중 logit_normal 일 때만 적용됩니다." },
+    { k: "logit_std", l: "logit_std", t: "num", d: "1", h: "분포의 폭. 클수록 넓게 퍼집니다. 사전학습 값은 0.95. 적용 조건은 logit_mean 과 같습니다." },
+    { k: "discrete_flow_shift", l: "flow shift", t: "num", d: "1.0", h: "1 보다 크면 타임스텝을 노이즈 많은 쪽으로 옮깁니다. truncated_logit_normal 은 1.0, shift 는 3.0 을 쓰세요. sigma, shift, truncated_logit_normal 에서 적용됩니다." },
+    { k: "sigmoid_scale", l: "sigmoid_scale", t: "num", d: "1.0", h: "클수록 타임스텝이 양 끝까지 넓게 퍼집니다. sigmoid, shift, flux_shift 에서 적용됩니다." },
+    { k: "weighting_scheme", l: "loss 가중", t: "select", o: ["uniform", "none", "sigma_sqrt", "cosmap", "logit_normal", "mode"], d: "uniform", h: "타임스텝별 loss 비중. 사전학습은 가중을 쓰지 않았으므로 uniform 을 권장합니다(none 과 같음). sigma 샘플링에서는 logit_normal, mode 가 뽑는 분포를 정합니다." },
+  ]},
+  { id: "memory", title: "메모리·속도", tab: "memory", help: "메모리가 모자라면 아래 프리셋을 고르거나 DiT INT8 → TE INT8 → 블록 스왑 순서로 켜세요. 캐시를 끄면 학습 중에도 텍스트 인코더나 VAE 가 GPU 에 남습니다. VRAM 최대치는 학습보다 시작할 때 텍스트 인코더 캐시 단계에서 나오는 경우가 많습니다.", items: [
+    { k: "mixed_precision", l: "정밀도", t: "select", o: ["bf16", "fp16", "no"], d: "no", h: "학습 계산에 쓰는 숫자 형식. bf16 을 쓰세요. DiT 와 텍스트 인코더가 bf16 모델이라 fp16 은 권장되지 않습니다. 텍스트 인코더는 bf16, VAE 는 fp32 로 이 설정과 관계없이 고정입니다." },
+    { k: "gradient_checkpointing", l: "gradient checkpointing", t: "bool", h: "블록 중간 결과를 저장하지 않고 필요할 때 다시 계산해 VRAM 을 줄입니다. 계산은 조금 늘지만 MOSS 에서는 사실상 필수이니 켜 두세요." },
+    { k: "convrot_int8", l: "DiT INT8", t: "bool", triton: "켜면 bf16 보다 느려집니다", h: "고정된 DiT 가중치를 INT8 로 줄여 가중치 VRAM 을 절반으로 만듭니다. LoRA 는 그대로 학습되고 loss 도 bf16 과 같습니다. triton 이 없어도 돌아가지만 VRAM 만 줄고 bf16 보다 느립니다. 생성 이미지 차이는 PSNR 약 27dB (구도·디테일 동일). RTX 5090 실측은 아래 판단 기준 카드를 보세요." },
+    { k: "convrot_int8_text_encoder", l: "TE INT8", t: "bool", triton: "켜면 느린 대체 경로로 동작합니다", h: "텍스트 인코더를 약 16GB → 8GB 로 줄입니다. 캐시를 만드는 시작 단계의 VRAM·CPU RAM 이 줄고, 학습 속도와는 관계없습니다. 출력에 약 5% 오차가 생기므로 VRAM 이 넉넉하면 끄세요." },
+    { k: "blocks_to_swap", l: "블록 스왑", t: "int", d: "0", h: "DiT 42블록 중 이 수만큼 CPU 에 두고 쓸 때만 GPU 로 옮깁니다. 0~40. 늘릴수록 VRAM 은 줄고 CPU RAM 사용과 스텝 시간은 늘어납니다. 활성값 CPU 오프로드와 함께 쓸 수 없습니다." },
+    { k: "unsloth_offload_checkpointing", l: "활성값 CPU 오프로드", t: "bool", h: "gradient checkpointing 의 활성값을 CPU RAM 으로 비동기 전송해 VRAM 을 줄입니다. 켜면 gradient checkpointing 도 함께 켜집니다. 블록 스왑과 함께 쓸 수 없습니다." },
+    { k: "cache_latents", l: "latent 캐시", t: "bool", h: "이미지를 VAE 로 미리 변환해 두어 학습 중 VAE 를 GPU 에서 내립니다. 매 스텝 다시 인코딩하지 않습니다." },
+    { k: "cache_latents_to_disk", l: "→ 디스크 저장", t: "bool", h: "이미지 폴더에 *_moss.npz 로 저장해 다음 학습에서 다시 씁니다." },
+    { k: "cache_text_encoder_outputs", l: "TE 출력 캐시", t: "bool", h: "캡션의 텍스트 인코더 출력을 미리 계산해 학습 중 인코더를 GPU 에서 내립니다. 강력 권장. 'DiT 만 학습'이 켜져 있어야 합니다. 캡션 후보가 많을수록 캐시 크기와 생성 시간이 늘어납니다." },
+    { k: "cache_text_encoder_outputs_to_disk", l: "→ 디스크 저장", t: "bool", h: "이미지 폴더에 *_moss_te.npz 로 저장합니다. 캡션이 바뀌면 자동으로 다시 만듭니다. 캐시가 있어도 시작할 때 인코더가 GPU 에 잠시 올라갑니다." },
+    { k: "attn_mode", l: "Flash Attention 2", t: "bool", on: "flash", off: "torch", flash: "끄거나 설치해야 학습이 시작됩니다", h: "어텐션을 Flash Attention 2 로 계산합니다. 스텝 시간의 대부분이 어텐션이라 학습이 빨라집니다. RTX 5090 의 1152×864·배치 4 실제 학습에서 약 7 s/step 이 약 4.6 s/step 이 되었습니다(이전 기록과 비교, 같은 시점 대조 측정은 아닙니다). 실제 그림·가중치로 비교한 결과 차이는 0.05~0.13% 로 bf16 반올림 오차보다 작아 학습 품질에는 영향이 없다고 봅니다. 끄면 PyTorch SDPA(torch)로 계산합니다. bf16·fp16 전용이고, 같은 시드여도 샘플 세부는 조금 달라질 수 있습니다." },
+    { k: "compile", l: "torch.compile", t: "bool", triton: "켤 수 없습니다", h: "블록 단위로 컴파일해 스텝을 빠르게 합니다. Triton 이 필요합니다. 주의: 캡션 길이가 배치마다 달라 버킷이 1개여도 입력 크기가 바뀝니다. 이 옵션만 켜면 소형 재현 시험에서 두 번째 스텝에 PyTorch 내부 오류로 멈췄습니다. 실행 탭 추가 인자에 --compile_dynamic false --compile_cache_size_limit 64 를 함께 넣으면 소형 시험은 통과하지만 새 길이마다 컴파일합니다. 블록 스왑과 함께 쓰면 효과가 줄어듭니다. 실제 학습의 속도 이득은 측정하지 않았습니다." },
+  ]},
+  { id: "output", title: "출력·저장", tab: "output", items: [
+    { k: "output_dir", l: "출력 폴더", t: "dir" },
+    { k: "output_name", l: "파일 이름", t: "text" },
+    { k: "save_model_as", l: "형식", t: "select", o: ["safetensors", "ckpt", "pt"] },
+    { k: "save_every_n_epochs", l: "LoRA 저장 (에포크마다)", t: "int" },
+    { k: "save_last_n_epochs", l: "최근 N 개만 보관", t: "int" },
+    { k: "save_state", l: "이어하기 상태 저장", t: "bool", h:"LoRA 를 저장할 때마다 이어서 학습할 수 있는 상태 폴더도 만듭니다. 컴퓨터가 꺼지거나 학습이 오류로 죽어도 마지막 저장 지점부터 이어갈 수 있습니다. 중지 버튼으로 멈출 때는 이 항목과 상관없이 저장됩니다. 상태 폴더는 LoRA 파일보다 크므로 켜면 '최근 N 개만 보관'을 함께 쓰세요." },
+    { k: "logging_dir", l: "TensorBoard 로그", t: "dir" },
+    { k: "sample_prompts", l: "샘플 프롬프트 파일", t: "file" },
+    { k: "sample_every_n_epochs", l: "샘플 (에포크마다)", t: "int" },
+    { k: "sample_at_first", l: "학습 전 샘플", t: "bool" },
+  ]},
+];
+const DS_GENERAL = [
+  { k: "enable_multiline_caption", l: "여러 줄 캡션", t: "bool", h: "켜면 캡션 파일 전체를 줄바꿈까지 그대로 쓰고, ---===--- 줄로 나눈 후보가 있으면 스텝마다 하나를 무작위로 고릅니다. 끄면 첫 줄만 쓰고 나머지는 버립니다. 후보가 많을수록 TE 캐시 크기와 생성 시간이 그만큼 늘어납니다." },
+  { k: "caption_extension", l: "캡션 확장자", t: "text", short: true },
+  { k: "caption_dropout_rate", l: "캡션 드롭아웃", t: "num", d: "0", h: "이 비율의 스텝에서 캡션을 빈 프롬프트로 바꿔 학습합니다. 모든 이미지 폴더에 함께 적용됩니다. TE 출력 캐시를 디스크에 두면 캐시를 만들 때의 값이 파일에 저장되고 학습은 그 값을 씁니다. 값을 바꾼 뒤에는 *_moss_te.npz 를 지워 다시 만들어야 반영됩니다. anima_lora 문서에는 0.05~0.1 이 CFG 에서 화풍을 약하게 했다는 기록이 있습니다(30장 1세트)." },
+];
+const DS_DATASET = [
+  { k: "resolution", l: "해상도", t: "reso", h: "학습 이미지의 기준 크기. 1024 또는 1024,768 처럼 쓰고 16 의 배수여야 합니다. 버킷을 켜면 이 넓이를 넘지 않는 크기로 맞추고, 끄면 모든 이미지를 이 크기로 맞춥니다. 높일수록 VRAM 과 시간이 늘어납니다." },
+  { k: "batch_size", l: "배치", t: "int", spin: { min: 1 } },
+  { k: "enable_bucket", l: "버킷", t: "bool", h: "이미지를 가로세로 비율이 비슷한 크기 묶음(버킷)으로 나눠 학습합니다. 비율이 제각각인 데이터셋은 켜 두세요. 끄면 모든 이미지를 해상도 비율에 맞춰 가장자리를 잘라 냅니다." },
+  { k: "bucket_no_upscale", l: "업스케일 안 함", t: "bool", h: "켜면 이미지를 원본보다 키우지 않습니다. 넓이가 해상도 넓이(1024 면 1024×1024)를 넘는 이미지만 줄이고, 나머지는 크기 그대로 버킷 간격에 맞춰 가장자리만 조금 잘라 씁니다. 버킷은 이미지 크기에서 자동으로 정해져 최소·최대 버킷은 쓰이지 않습니다. 끄면 작은 이미지도 해상도에 맞춰 확대합니다." },
+  { k: "min_bucket_reso", l: "최소 버킷", t: "int", d: "256", h: "버킷 한 변의 최소 길이. 이보다 작은 버킷은 만들지 않습니다. 작은 이미지는 버킷 크기에 맞춰 확대됩니다. 업스케일 안 함을 켜면 쓰이지 않지만, 해상도보다 크면 학습이 시작되지 않는 것은 같습니다." },
+  { k: "max_bucket_reso", l: "최대 버킷", t: "int", d: "1024", h: "버킷 한 변의 최대 길이. 해상도보다 작으면 학습이 시작되지 않습니다. 늘리면 세로나 가로로 긴 버킷을 더 쓸 수 있습니다. 업스케일 안 함을 켜면 쓰이지 않지만 이 조건은 그대로 검사합니다." },
+  { k: "bucket_reso_steps", l: "버킷 간격", t: "int", d: "64", h: "버킷 크기가 늘어나는 단위. 16 의 배수여야 하고 최소·최대 버킷은 이 값으로 나누어떨어져야 합니다. 줄이면 잘리는 부분은 줄지만 버킷이 늘어 INT8 튜닝 시간도 늘 수 있습니다." },
+];
+const DS_SUBSET = [
+  { k: "image_dir", l: "이미지 폴더", t: "dir" },
+  { k: "num_repeats", l: "반복", t: "int", d: "1", spin: { min: 1 } },
+];
+const PROMPT_FIELDS = [
+  { k: "prompt", l: "긍정", t: "lines" },
+  { k: "negative", l: "부정", t: "lines" },
+  { k: "w", l: "너비", t: "int", d: "1024", spin: { min: 16, step: 16 } },
+  { k: "h", l: "높이", t: "int", d: "1024", spin: { min: 16, step: 16 } },
+  { k: "s", l: "스텝", t: "int", d: "50", spin: { min: 1, max: 1000 } },
+  { k: "l", l: "CFG", t: "num", d: "3.0", spin: { min: 0, step: 0.5 } },
+  { k: "fs", l: "Flow shift", t: "num", d: "5.0", spin: { min: 0, step: 0.5 } },
+  { k: "d", l: "시드", t: "int", spin: { min: 0 } },
+];
+const PROMPT_SIZES = [[1024, 1024, "1:1"], [896, 1152, "3:4"], [1152, 896, "4:3"], [768, 1344, "9:16"], [1344, 768, "16:9"]];
+// 값 검사를 통과한 옵션만 칸으로 옮긴다. 나머지(--am, --g 등)는 extra 에 그대로 둔다
+const PROMPT_OPTS = { w: /^\d+$/, h: /^\d+$/, s: /^\d+$/, d: /^\d+$/, l: /^[\d.]+$/, fs: /^\S+$/ };
+const RANK_PRESETS = [
+  { n: "32 / 16", v: { network_dim: "32", network_alpha: "16" } },
+  { n: "32 / 32", v: { network_dim: "32", network_alpha: "32" } },
+  { n: "64 / 32", v: { network_dim: "64", network_alpha: "32" } },
+  { n: "64 / 64", v: { network_dim: "64", network_alpha: "64" } },
+  { n: "128 / 64", v: { network_dim: "128", network_alpha: "64" } },
+];
+const LR_SLIDER = { min: -6, max: -3, snap: 0.08, points: [-5, -4] };  // log10 눈금. points 근처는 달라붙는다
+const TS_PRESETS = [
+  { n: "사전학습 재현", v: { timestep_sampling: "truncated_logit_normal", logit_mean: "-1.09", logit_std: "0.95", discrete_flow_shift: "1.0" } },
+  { n: "간단 근사 (shift 3.0)", v: { timestep_sampling: "shift", discrete_flow_shift: "3.0" } },
+  { n: "기본 (sigmoid)", v: { timestep_sampling: "sigmoid", discrete_flow_shift: "1.0" } },
+];
+const VRAM_PRESETS = [
+  { n: "32GB · 24GB", note: "DiT INT8 + TE 출력 캐시 → 시작 시 약 16GB, bf16 보다 이미지당 약 15% 빠름 (RTX 5090 실측)", v: { convrot_int8: true, convrot_int8_text_encoder: false, blocks_to_swap: "", unsloth_offload_checkpointing: false } },
+  { n: "16GB", note: "DiT·TE 모두 INT8 → 약 9GB", v: { convrot_int8: true, convrot_int8_text_encoder: true, blocks_to_swap: "", unsloth_offload_checkpointing: false } },
+  { n: "12GB", note: "INT8 + 블록 스왑 28 → 학습 약 6GB, CPU RAM 약 15GB", v: { convrot_int8: true, convrot_int8_text_encoder: true, blocks_to_swap: "28", unsloth_offload_checkpointing: false } },
+];
+
+// ---------------------------------------------------------------- 상태
+const S = {
+  configPath: "", configs: [], cfg: {}, orig: {},
+  ds: null, dsOrig: null, removedSubsets: [],
+  prompts: null, promptsOrig: null, promptsPath: "", promptsIsTxt: false, pitems: [], pActive: 0, pRaw: false, outPaths: false, extraArgs: "",
+  check: null, logSeq: 0, logLines: [], running: false,
+  runs: [], run: "", scalars: null, outputs: null,
+};
+try { S.extraArgs = localStorage.getItem("moss_ui_extra") || ""; } catch (e) {}
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtSize = n => n > 1 << 30 ? (n / (1 << 30)).toFixed(2) + " GB" : n > 1 << 20 ? (n / (1 << 20)).toFixed(1) + " MB" : (n / 1024).toFixed(0) + " KB";
+const fmtTime = t => { const d = new Date(t * 1000); return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+const imgUrl = p => "/api/image?path=" + encodeURIComponent(p);
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({ error: "응답 오류" }));
+  if (!r.ok) { const e = new Error(j.error || r.statusText); e.data = j; throw e; }
+  return j;
+}
+let toastTimer;
+function toast(msg, err) {
+  const t = $("#toast"); t.textContent = msg; t.className = err ? "err" : ""; t.style.display = "block";
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.style.display = "none", err ? 6000 : 2500);
+}
+
+// 값 표현: 편집 중에는 모두 문자열/불리언/문자열 배열로 다룬다
+function toEdit(f, v) {
+  if (f.t === "bool" && f.on) return v === undefined || v === f.on;  // 문자열 설정을 스위치로 다룬다. 키가 없으면 켜짐
+  if (f.t === "bool") return !!v;
+  if (f.t === "lines") return Array.isArray(v) ? v.join("\n") : (v ?? "");
+  if (f.t === "reso") return Array.isArray(v) ? v.join(",") : (v ?? "") + "";
+  // 파일에는 비율(0.05)로 저장한다. 1 이상은 절대 스텝이라 % 로 옮길 수 없어 칸을 비우고 안내만 한다(ctlHtml)
+  if (f.t === "pct") return typeof v === "number" && v < 1 ? String(+(v * 100).toFixed(4)) : "";
+  return v === undefined || v === null ? "" : String(v);
+}
+function toSave(f, v) {
+  if (f.t === "bool" && f.on) return v ? f.on : f.off;
+  if (f.t === "bool") return !!v;
+  const s = String(v).trim();
+  if (f.t === "lines") { const a = s.split("\n").map(x => x.trim()).filter(Boolean); return a.length ? a : null; }
+  if (s === "") return null;
+  if (f.t === "int" || f.t === "num") return { raw: s };
+  if (f.t === "pct") return { raw: String(+(parseFloat(s) / 100).toFixed(6)) };
+  if (f.t === "reso") { const p = s.split(/[,x ]+/).filter(Boolean); return p.length > 1 ? p.map(Number) : { raw: p[0] }; }
+  return s;
+}
+function validNum(f, s) {
+  s = String(s).trim();
+  if (!s) return true;
+  if (f.t === "int") return /^[+-]?\d+$/.test(s);
+  if (f.t === "num") return /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s);
+  if (f.t === "reso") return /^\d+([,x ]+\d+)?$/.test(s);
+  if (f.t === "pct") return /^\d+(\.\d+)?$/.test(s) && parseFloat(s) < 100;
+  return true;
+}
+
+// ---------------------------------------------------------------- 설정 패널
+const CHEVRON = d => `<svg viewBox="0 0 10 6" width="9" height="6" aria-hidden="true"><path d="${d}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`;
+function spinHtml(id, input) {
+  return `<span class="spin">${input}<span class="spinbtns"><button type="button" tabindex="-1" data-spinfor="${id}" data-dir="1" title="늘리기">${CHEVRON("M1 5l4-4 4 4")}</button><button type="button" tabindex="-1" data-spinfor="${id}" data-dir="-1" title="줄이기">${CHEVRON("M1 1l4 4 4-4")}</button></span></span>`;
+}
+function lrSliderPos(v) {
+  const x = Math.log10(parseFloat(v));
+  return isFinite(x) ? Math.min(LR_SLIDER.max, Math.max(LR_SLIDER.min, x)) : -4;
+}
+function lrSliderHtml(val) {
+  const { min, max } = LR_SLIDER;
+  // 슬라이더 손잡이(16px) 중심이 눈금 위치에 오도록 보정한다
+  const ticks = LR_SLIDER.points.map(x => { const p = (x - min) / (max - min); return `<button type="button" tabindex="-1" data-lrpoint="${x}" style="left:calc(${p * 100}% + ${(0.5 - p) * 16}px)">${Number(`1e${x}`)}</button>`; }).join("");
+  return `<span class="lrslider"><input type="range" data-lrslider min="${min}" max="${max}" step="0.01" value="${lrSliderPos(val)}"><span class="ticks">${ticks}</span></span>`;
+}
+function tritonBadge(f) {
+  if (!f.triton || !S.triton) return "";
+  return S.triton.installed
+    ? `<span class="badge ok">triton ${esc(S.triton.version)} 설치됨</span>`
+    : `<span class="badge warn" title="pip install triton-windows">⚠ triton 없음 — ${esc(f.triton)}</span>`;
+}
+function flashBadge(f) {
+  if (!f.flash || !S.flash) return "";
+  return S.flash.installed
+    ? `<span class="badge ok">flash_attn ${esc(S.flash.version)} 설치됨</span>`
+    : `<span class="badge warn">⚠ flash_attn 없음 — ${esc(f.flash)}</span>`;
+}
+function ctlHtml(f, id, val) {
+  const ph = f.t === "pct" && S.absWarmup ? `현재 ${S.absWarmup} 스텝` : f.d !== undefined ? `기본값 ${f.d}` : "";
+  if (f.t === "bool") return `<label class="switch"><input type="checkbox" id="${id}" ${val ? "checked" : ""}><span></span></label>${tritonBadge(f)}${flashBadge(f)}`;
+  if (f.t === "select") {
+    const opts = [`<option value="">${f.d ? `(기본: ${esc(f.d)})` : "(미지정)"}</option>`]
+      .concat(f.o.map(o => `<option ${o === val ? "selected" : ""}>${esc(o)}</option>`));
+    if (val && !f.o.includes(val)) opts.push(`<option selected>${esc(val)}</option>`);
+    return `<select id="${id}">${opts.join("")}</select>`;
+  }
+  if (f.t === "lines") return `<textarea id="${id}" rows="2" placeholder="${esc(ph)}">${esc(val)}</textarea>`;
+  const cls = (f.t === "int" || f.t === "num" || f.t === "pct" || f.t === "reso" || f.short) ? "num" : "";
+  let html = `<input type="text" class="${cls}" id="${id}" value="${esc(val)}" placeholder="${esc(ph)}" spellcheck="false">`;
+  if (f.spin) return spinHtml(id, html) + (f.slider ? lrSliderHtml(val) : "");
+  if (f.t === "file" || f.t === "dir") html += `<button class="btn small" data-browse="${id}" data-kind="${f.t}" title="찾아보기">…</button><span class="badge" data-pathbadge="${f.k}"></span>`;
+  return html;
+}
+function rowHtml(f, id, val, changed) {
+  return `<div class="row ${changed ? "changed" : ""}" data-row="${id}"><label for="${id}" title="${esc(f.k)}">${esc(f.l)}<code>${esc(f.k)}</code></label><div class="ctl">${ctlHtml(f, id, val)}</div></div>`
+    + (f.h ? `<div class="help">${esc(f.h)}</div>` : "");
+}
+
+// 가로 탭 순서 (Alt+1~8)
+const TAB_ORDER = ["dataset", "preview", "train", "memory", "output", "run", "monitor", "results"];
+const TAB_LABEL = { dataset: "데이터셋", preview: "자료 미리보기", train: "학습 설정", memory: "메모리·속도", output: "출력·샘플", run: "실행", monitor: "모니터", results: "결과" };
+const KEY_TAB = Object.fromEntries(CFG_GROUPS.flatMap(g => g.items.map(f => [f.k, g.tab])));
+
+function cardHtml(g) {
+  let html = `<section class="card" data-id="${g.id}"><div class="ch">${g.title}<span class="sub" id="sub-${g.id}"></span></div><div class="body">`;
+  if (g.help) html += `<div class="help" style="margin:0 0 8px">${esc(g.help)}</div>`;
+  if (g.id === "train") html += `<div class="presets"><span class="plabel">Rank / Alpha</span>${RANK_PRESETS.map((p, i) => `<button class="btn" data-rankpreset="${i}">${p.n}</button>`).join("")}</div>`;
+  if (g.id === "timestep") html += `<div class="presets">${TS_PRESETS.map((p, i) => `<button class="btn" data-tspreset="${i}">${p.n}</button>`).join("")}</div>`;
+  if (g.id === "memory") html += `<div class="presets">${VRAM_PRESETS.map((p, i) => `<button class="btn" data-vram="${i}" title="${esc(p.note)}">${p.n}</button>`).join("")}</div><div class="help" style="margin:0 0 8px" id="vramNote">GPU VRAM 에 맞춘 프리셋 (문서 실측 기준)</div>`;
+  for (const f of g.items) html += rowHtml(f, "c_" + f.k, S.cfg[f.k], S.cfg[f.k] !== S.orig[f.k]);
+  return html + `</div></section>`;
+}
+// 반복·배치는 dataset.toml, 에포크는 학습 설정 파일 값이다. 입력칸 id 는 원래 형식이라 입력 처리와 저장은 그대로다
+function scheduleHtml(g) {
+  const repeat = findF(DS_SUBSET, "num_repeats"), batch = findF(DS_DATASET, "batch_size"), epoch = g.items[0];
+  let h = `<section class="card" data-id="${g.id}"><div class="ch">${g.title}</div><div class="body">`;
+  S.ds?.subsets.forEach((sub, i) => {
+    const name = (sub.image_dir || "").split(/[\\/]/).filter(Boolean).pop() || `폴더 ${i + 1}`;
+    const f = S.ds.subsets.length > 1 ? { ...repeat, l: `${repeat.l} · ${name}` } : repeat;
+    h += rowHtml(f, `s${i}_${f.k}`, sub[f.k], sub[f.k] !== (S.dsOrig.subsets[i] || {})[f.k]);
+  });
+  h += rowHtml(epoch, "c_" + epoch.k, S.cfg[epoch.k], S.cfg[epoch.k] !== S.orig[epoch.k]);
+  if (S.ds) h += rowHtml(batch, "d_" + batch.k, S.ds.dataset[batch.k], S.ds.dataset[batch.k] !== S.dsOrig.dataset[batch.k]) + `<div class="estimate" data-est="line">–</div>`;
+  h += `<div class="kpis" style="margin-top:10px;grid-template-columns:repeat(4,minmax(0,1fr))">
+      <div class="kpi"><div class="k">이미지</div><div class="v" data-est="images">–</div></div>
+      <div class="kpi"><div class="k">그림당 횟수</div><div class="v" data-est="seen">–</div></div>
+      <div class="kpi"><div class="k">에포크당 스텝</div><div class="v" data-est="perEpoch">–</div></div>
+      <div class="kpi"><div class="k">총 스텝 (예상)</div><div class="v" data-est="total">–</div></div>
+    </div><div class="estimate" style="margin:8px 0 0" data-est="verdict">–</div>
+    <div class="help" style="margin:6px 0 0">이미지 수는 저장된 dataset.toml 기준, 스텝은 입력 중인 값 기준입니다. 버킷 배치 때문에 실제 스텝은 조금 더 많을 수 있습니다.</div>
+    <div class="help" style="margin:6px 0 0">그림당 횟수는 그림 한 장을 학습에서 보는 횟수로, 반복 × 에포크입니다. 배치는 이 횟수를 바꾸지 않고 스텝 수(가중치를 고치는 횟수)만 바꿉니다. RTX 5090 실측으로 이미지당 시간은 배치 2 와 4 가 거의 같아서, 같은 횟수면 걸리는 시간도 비슷합니다.</div>
+    <div class="help" style="margin:6px 0 0">일반 범위는 그림 50장 이하 40~120회, 300장 이하 20~60회, 1000장 이하 10~30회, 그보다 많으면 8~25회입니다. 총 스텝이 1000 미만이면 횟수가 맞아도 적다고 표시합니다. 이 기준은 일반적인 LoRA 경험칙이고 MOSS 로 잰 값이 아닙니다. 최종 판단은 에포크별 샘플을 비교해서 하세요.</div>`;
+  return h + `</div></section>`;
+}
+// 출력 탭은 저장 설정을 위쪽 띠로 모은다. 경로는 자주 바꾸지 않아 접어 두고 요약만 보여 준다
+const hintHtml = text => `<span class="hint" title="${esc(text)}">?</span>`;
+const OUT_PATHS = [["출력", "output_dir"], ["로그", "logging_dir"], ["프롬프트", "sample_prompts"]];
+function outFieldHtml(k, cls = "") {
+  const f = findF(CFG_GROUPS.find(g => g.id === "output").items, k), id = "c_" + k;
+  return `<div class="ofld ${cls} ${S.cfg[k] !== S.orig[k] ? "changed" : ""}" data-row="${id}"><label for="${id}" title="${esc(k)}">${esc(f.l)}${f.h ? hintHtml(f.h) : ""}</label><div class="ctl">${ctlHtml(f, id, S.cfg[k])}</div></div>`;
+}
+function outputStripHtml() {
+  const open = S.outPaths || S.prompts === null, paths = CFG_GROUPS.find(g => g.id === "output").items.filter(f => OUT_PATHS.some(p => p[1] === f.k));
+  return `<section class="card outstrip"><div class="out-fields">
+      ${outFieldHtml("output_name", "name")}${outFieldHtml("save_model_as", "format")}<span class="osep"></span>
+      ${outFieldHtml("save_every_n_epochs")}${outFieldHtml("save_last_n_epochs")}${outFieldHtml("sample_every_n_epochs")}<span class="osep"></span>
+      ${outFieldHtml("sample_at_first", "sw")}${outFieldHtml("save_state", "sw")}<span class="spacer"></span>
+      <button class="btn small" id="btnOutPaths">경로 설정 ${open ? "▴" : "▾"}</button></div>
+    <div class="out-summary" id="outSummary" ${open ? "hidden" : ""}></div>
+    <div class="out-paths" id="outPaths" ${open ? "" : "hidden"}>${paths.map(f => rowHtml(f, "c_" + f.k, S.cfg[f.k], S.cfg[f.k] !== S.orig[f.k])).join("")}</div></section>`;
+}
+function updateOutSummary() {
+  const box = $("#outSummary");
+  if (!box) return;
+  box.innerHTML = OUT_PATHS.map(([name, k]) => {
+    const st = S.check?.paths?.[k]?.state, bad = st && st !== "ok" && st !== "empty", tail = (S.cfg[k] || "").split(/[\\/]/).filter(Boolean).slice(-2).join("/");
+    return `<span class="${bad ? "bad" : ""}" title="${esc(S.cfg[k] || "")}">${name} ${esc(tail || "없음")}${bad ? " ⚠" : ""}</span>`;
+  }).join(" · ");
+}
+function renderLeft() {
+  const cards = tab => CFG_GROUPS.filter(g => g.tab === tab && !["dataset", "model", "schedule"].includes(g.id)).map(cardHtml).join("");
+  // 격자 열 수는 화면 폭에 따라 바뀌므로, 학습 길이가 늘 모델 바로 아래에 오도록 한 열로 묶는다
+  const group = id => CFG_GROUPS.find(g => g.id === id);
+  $("#grid-train").innerHTML = `<div class="grid-stack">${cardHtml(group("model"))}${scheduleHtml(group("schedule"))}</div>` + cards("train");
+  $("#grid-memory").innerHTML = cards("memory") + memoryTableHtml() + int8CardHtml();
+  $("#grid-output").innerHTML = outputStripHtml() + promptsHtml();
+  renderPrompts();
+  renderGallery();
+  ensureGallery();
+  $("#dsRight").innerHTML = datasetHtml();
+  updateBucketRows();
+  if (document.activeElement?.id !== "extraArgs") $("#extraArgs").value = S.extraArgs;
+  updateBadges();
+  updateOutSummary();
+  updateSubs();
+  updatePresetMarks();
+  renderDsStats();
+  updateStepEstimate();
+}
+
+// docs/moss_image_train_network.md 7.1 의 실측값
+function memoryTableHtml() {
+  const rows = [
+    ["bf16 DiT + bf16 TE", "15.3", "13.2", "17.2"],
+    ["INT8 DiT + INT8 TE", "9.1", "9.1", "9.9"],
+    ["INT8 + 블록 스왑 20", "7.9", "6.9", "14.0"],
+    ["INT8 + 블록 스왑 36", "7.9", "5.2", "15.6"],
+    ["INT8 + 활성값 CPU 오프로드", "8.2", "8.2", "11.2"],
+    ["bf16 DiT + INT8 TE + 블록 스왑 20", "9.0", "9.0", "18.5"],
+  ];
+  return `<section class="card"><div class="ch">메모리 사용량 기준<span class="sub">문서 실측</span></div><div class="body" style="font-size:12.5px">
+    <table class="memtable"><tr><th>구성 (TE 출력 캐시)</th><th>VRAM 시작</th><th>VRAM 학습</th><th>CPU RAM</th></tr>
+    ${rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}GB</td><td>${r[2]}GB</td><td>${r[3]}GB</td></tr>`).join("")}</table>
+    <div class="help" style="margin:8px 0 0">RTX PRO 6000 Blackwell, 1024x1024, 배치 1, LoRA dim 16, AdamW 기준입니다. 해상도·배치·rank 를 올리면 VRAM 이 더 듭니다. RTX 5090 에서 bf16 과 INT8 DiT 의 최대치는 시작 단계의 약 16GB 로 같았습니다.</div>
+  </div></section>`;
+}
+
+// 스텝 수는 저장 전 입력값으로 바로 계산한다. 이미지 수만 마지막 점검 결과를 쓴다
+const ESTIMATE_KEYS = new Set(["max_train_epochs", "batch_size", "num_repeats", "image_dir"]);
+function stepsEstimate() {
+  const scans = S.check?.dataset?.subsets;
+  if (!scans || !S.ds) return null;
+  let images = 0, samples = 0, unknown = false, minRepeat = Infinity, maxRepeat = 0;
+  for (const sub of S.ds.subsets) {
+    const scan = scans.find(s => s.image_dir === sub.image_dir);
+    if (!scan?.ok) { unknown = true; continue; }
+    const repeat = parseInt(sub.num_repeats) || 1;
+    images += scan.num_images;
+    samples += scan.num_images * repeat;
+    if (scan.num_images) { minRepeat = Math.min(minRepeat, repeat); maxRepeat = Math.max(maxRepeat, repeat); }
+  }
+  const batch = parseInt(S.ds.dataset.batch_size) || 1, epochs = parseInt(S.cfg.max_train_epochs) || 0;
+  const perEpoch = Math.ceil(samples / batch);
+  return { images, samples, batch, epochs, perEpoch, total: perEpoch * epochs, unknown, minRepeat, maxRepeat };
+}
+// 그림 한 장을 보는 횟수의 일반 범위 [그림 수 상한, 최소, 최대]. LoRA 경험칙이고 MOSS 로 잰 값이 아니다
+const SEEN_BANDS = [[50, 40, 120], [300, 20, 60], [1000, 10, 30], [Infinity, 8, 25]];
+const MIN_TOTAL_STEPS = 1000;
+function seenVerdict(e) {
+  if (!e.images || !e.epochs) return "이미지와 에포크가 정해지면 판단합니다.";
+  const [, lo, hi] = SEEN_BANDS.find(b => e.images <= b[0]);
+  const perEpoch = e.samples / e.images, seen = Math.round(perEpoch * e.epochs);
+  const range = `그림 ${e.images.toLocaleString()}장의 일반 범위 ${lo}~${hi}회`;
+  const steps = epochs => (e.perEpoch * epochs).toLocaleString();
+  const few = e.total < MIN_TOTAL_STEPS ? ` 다만 총 스텝이 ${e.total.toLocaleString()}로 적습니다. 배치를 낮추면 같은 횟수로 스텝이 늘어납니다.` : "";
+  const head = (cls, label, text) => `<span class="badge ${cls}">${label}</span> ${e.minRepeat === e.maxRepeat ? "" : `평균 ${seen}회 · `}${text}`;
+  if (seen < lo) {
+    const need = Math.ceil(lo / perEpoch);
+    return head("warn", "적은 편", `${range}보다 적어 화풍이나 특징이 덜 잡힐 수 있습니다. 에포크 ${need} 이상이면 범위에 듭니다(총 ${steps(need)}스텝).`);
+  }
+  if (seen > hi) {
+    const need = Math.floor(hi / perEpoch);
+    return head("warn", "많은 편", `${range}보다 많습니다. 시간이 더 들고 학습 그림을 베낀 듯한 결과가 나올 수 있습니다. ${need ? `에포크 ${need} 이하면 범위에 듭니다(총 ${steps(need)}스텝).` : "반복을 줄이세요."}${few}`);
+  }
+  return head(few ? "warn" : "ok", few ? "스텝 적음" : "적당", `${range} 안입니다.${few}`);
+}
+const EST_VIEWS = {
+  line: e => `이미지 ${e.images}장, 반복 포함 ${e.samples}장 ÷ 배치 ${e.batch} = 에포크당 <b>${e.perEpoch.toLocaleString()}</b>스텝 × ${e.epochs || "?"} 에포크 = 총 <b>${e.total ? e.total.toLocaleString() : "–"}</b>스텝 예상${e.unknown ? " · 점검하지 않은 폴더는 빠져 있습니다. 저장하면 포함됩니다" : ""}`,
+  images: e => `${e.images}`,
+  seen: e => !e.images || !e.epochs ? "–" : `${e.minRepeat === e.maxRepeat ? e.minRepeat * e.epochs : `${e.minRepeat * e.epochs}~${e.maxRepeat * e.epochs}`} <small>회</small>`,
+  verdict: seenVerdict,
+  perEpoch: e => `${e.perEpoch.toLocaleString()} <small>배치 ${e.batch}</small>`,
+  total: e => `${e.total ? e.total.toLocaleString() : "–"} <small>${e.epochs ? e.epochs + " 에포크" : ""}</small>`,
+};
+function updateStepEstimate() {
+  const e = stepsEstimate();
+  document.querySelectorAll("[data-est]").forEach(el => { el.innerHTML = e ? EST_VIEWS[el.dataset.est](e) : "–"; });
+  const card = $("#int8Card");
+  if (card) card.outerHTML = int8CardHtml();
+}
+
+// experiments/int8_ab 실측 요약 (RTX 5090, 버킷 19개, 604스텝)
+function int8CardHtml() {
+  // 줄어드는 시간은 스텝이 아니라 처리하는 이미지 수에 비례한다
+  const e = stepsEstimate(), images = e ? e.total * e.batch : 0;
+  const verdict = !images ? "" : images >= 5000 ? `<b style="color:#8fd8a8">켜는 것을 권장</b> — 이미지 ${images.toLocaleString()}장 처리` : images < 1500 ? `<b style="color:#f1d58a">bf16 이 나을 수 있음</b> — 이미지 ${images.toLocaleString()}장 처리 (튜닝 비용)` : `큰 차이 없음 — 이미지 ${images.toLocaleString()}장 처리`;
+  return `<section class="card" id="int8Card"><div class="ch">DiT INT8 판단 기준<span class="sub">RTX 5090 실측</span></div><div class="body" style="font-size:12.5px;line-height:1.7">
+    ${verdict ? `<div style="margin-bottom:6px">현재 설정: ${verdict}</div>` : ""}
+    <div>· 튜닝 후 속도: bf16 2.07 → INT8 1.81 s/step (<b>약 12% 빠름</b>)</div>
+    <div>· 처음 보는 버킷마다 튜닝 약 30초 — 결과는 디스크에 남아 다음 학습부터 생략</div>
+    <div>· 품질: bf16 과의 차이가 학습 시드 차이보다 작음 (loss·가중치·생성 이미지)</div>
+    <div>· TE INT8 은 끄기 — 학습 속도와 무관하고 조건 임베딩 오차만 생김</div>
+    <div style="color:var(--text-muted)">· bf16 원본에 LoRA 를 병합해 생성하면 LoRA 가 약하게 보임(반올림 손실) — 평가는 학습 중 샘플로</div>
+  </div></section>`;
+}
+
+// 업스케일 안 함이면 sd-scripts 가 이미지 크기로 버킷을 정해 최소·최대 버킷을 쓰지 않고, 버킷을 끄면 버킷 항목 전체가 쓰이지 않는다
+const BUCKET_KEYS = new Set(["enable_bucket", "bucket_no_upscale"]);
+function updateBucketRows() {
+  const d = S.ds?.dataset;
+  if (!d) return;
+  const noBucket = !d.enable_bucket, unused = noBucket || d.bucket_no_upscale;
+  const off = { d_bucket_no_upscale: noBucket, d_min_bucket_reso: unused, d_max_bucket_reso: unused, d_bucket_reso_steps: noBucket };
+  for (const [id, v] of Object.entries(off)) document.querySelector(`[data-row="${id}"]`)?.classList.toggle("off", !!v);
+}
+function datasetHtml() {
+  if (!S.ds) return `<section class="card"><div class="body"><div class="empty">dataset.toml 을 읽지 못했습니다. 아래 '데이터 로더·설정 파일'의 경로를 확인하고 저장하세요.</div></div></section>` + cardHtml(CFG_GROUPS.find(g => g.id === "dataset"));
+  let h = `<div id="dsStats"></div>`;
+  h += `<section class="card" style="margin-top:12px"><div class="ch">해상도·캡션<span class="sub">${esc(S.ds.path.split(/[\\/]/).pop())}</span></div><div class="body">`;
+  for (const f of DS_GENERAL) h += rowHtml(f, "g_" + f.k, S.ds.general[f.k], S.ds.general[f.k] !== S.dsOrig.general[f.k]);
+  for (const f of DS_DATASET) if (f.k !== "batch_size") h += rowHtml(f, "d_" + f.k, S.ds.dataset[f.k], S.ds.dataset[f.k] !== S.dsOrig.dataset[f.k]);
+  h += `</div></section><div style="margin-top:12px">` + cardHtml(CFG_GROUPS.find(g => g.id === "dataset")) + `</div>`;
+  return h;
+}
+
+// ---------------------------------------------------------------- 샘플 프롬프트
+// 파일은 sd-scripts 의 한 줄 형식 그대로다. 옵션은 " --" 로 나뉘고 줄바꿈은 문자 \n 으로 적는다(library/sampling.py)
+const unescapeNl = s => s.replace(/\\n/g, "\n");
+const promptSafe = s => s.trim().replace(/\r?\n/g, "\\n").replace(/ --/g, " —").replace(/^#+\s*/, "");
+function parsePromptLine(line) {
+  const parts = line.split(" --");
+  const it = { prompt: unescapeNl(parts[0].trim()), negative: "", w: "", h: "", s: "", l: "", fs: "", d: "", extra: [] };
+  for (const p of parts.slice(1)) {
+    const m = p.match(/^(\S+)\s+([\s\S]+)$/), key = m?.[1].toLowerCase(), val = m?.[2].trim();
+    if (key === "n") it.negative = unescapeNl(val);
+    else if (m && PROMPT_OPTS[key]?.test(val)) it[key] = val;
+    else it.extra.push(p);
+  }
+  return it;
+}
+function parsePrompts(text) {
+  S.pitems = text.split(/\r?\n/).map(line => (!line.trim() || line[0] === "#" ? { raw: line } : parsePromptLine(line.trim())));
+  while (S.pitems.length && S.pitems[S.pitems.length - 1].raw === "") S.pitems.pop();
+  if (S.pitems[S.pActive]?.prompt === undefined) S.pActive = S.pitems.findIndex(it => it.raw === undefined);
+}
+function promptLine(it) {
+  const opts = ["w", "h", "s", "l", "fs", "d"].filter(k => String(it[k]).trim() !== "").map(k => `--${k} ${String(it[k]).trim()}`);
+  if (it.negative.trim()) opts.push(`--n ${promptSafe(it.negative)}`);
+  return [promptSafe(it.prompt), ...opts, ...it.extra.map(x => `--${x}`)].join(" ");
+}
+// 긍정이 빈 칸은 파일에 쓰지 않는다(옵션만 남은 줄은 sd-scripts 가 프롬프트로 읽는다)
+function serializePrompts() {
+  return S.pitems.filter(it => it.raw !== undefined || promptSafe(it.prompt)).map(it => it.raw ?? promptLine(it)).join("\n") + "\n";
+}
+const promptMiniText = it => it.prompt.trim().split("\n")[0] || "(비어 있음)";
+const promptMeta = it => `${it.w || 1024}×${it.h || 1024} · ${it.s || 50}스텝${String(it.d).trim() ? ` · 시드 ${it.d}` : ""}`;
+function updatePromptMini(i) {
+  const it = S.pitems[i], text = $(`[data-pmini="${i}"]`), meta = $(`[data-pmeta="${i}"]`);
+  if (!it || !text) return;
+  text.textContent = promptMiniText(it); meta.textContent = promptMeta(it);
+}
+// 모든 카드의 입력칸을 DOM 에 두고 활성 카드만 펼친다. 캡션 넣기와 저장은 접힌 카드에서도 그대로 동작한다
+function promptCardHtml(it, i, n) {
+  const fld = k => { const f = findF(PROMPT_FIELDS, k); return `<div class="pf"><span class="lbl">${f.l}</span><div class="ctl">${ctlHtml(f, `p${i}_${k}`, it[k])}</div></div>`; };
+  return `<div class="pcard ${i === S.pActive ? "active" : ""}" data-pcard="${i}">
+    <div class="pcard-head" tabindex="0"><b>프롬프트 ${n}</b><span class="target">캡션 넣을 곳</span><span class="pmini" data-pmini="${i}">${esc(promptMiniText(it))}</span><span class="pmeta" data-pmeta="${i}">${esc(promptMeta(it))}</span><span class="spacer"></span>
+      <span class="pcard-btns"><button class="btn small" data-pdup="${i}">복제</button><button class="btn small danger" data-pdel="${i}">삭제</button></span></div>
+    <div class="pbody"><div class="pf"><span class="lbl">긍정</span><div class="ctl"><textarea id="p${i}_prompt" rows="4" spellcheck="false" placeholder="생성할 내용. 비워 두면 저장되지 않습니다">${esc(it.prompt)}</textarea></div></div>
+    <div class="pf"><span class="lbl">부정</span><div class="ctl"><textarea id="p${i}_negative" rows="2" spellcheck="false" placeholder="비우면 공식 기본값인 빈 프롬프트">${esc(it.negative)}</textarea></div></div>
+    <div class="psizes"><span class="lbl">크기</span>${PROMPT_SIZES.map(([w, h, n]) => `<button class="btn small" data-psize="${i}" data-w="${w}" data-h="${h}">${n}</button>`).join("")}</div>
+    <div class="pgrid">${["w", "h", "s", "l", "fs", "d"].map(fld).join("")}</div>
+    ${it.extra.length ? `<div class="help" style="margin:6px 0 0">그 외 옵션은 그대로 유지합니다: ${esc(it.extra.map(x => "--" + x).join(" "))}</div>` : ""}
+    </div>
+  </div>`;
+}
+const PROMPT_HELP = "스텝은 기본 50 이고 줄이면 샘플이 빨리 끝납니다. CFG 1 이면 부정 프롬프트를 쓰지 않습니다. Flow shift 는 샘플 생성 전용이며 기본 5.0 입니다. 시드를 고정하면 에포크별로 같은 조건에서 비교할 수 있고, 비우면 매번 달라집니다. TE 출력 캐시를 켜면 학습 시작 때 프롬프트를 미리 계산하므로 학습 중에 고쳐도 반영되지 않습니다.";
+function promptsHtml() {
+  if (S.prompts === null) return `<section class="card"><div class="ch">샘플 프롬프트</div><div class="body"><div class="empty">샘플 프롬프트 파일이 없습니다. 위의 '샘플 프롬프트 파일' 경로를 지정하고 저장하면 새로 만듭니다.</div></div></section>`;
+  return `<section class="card prompt-section"><div class="ch">샘플 프롬프트${hintHtml(PROMPT_HELP)}<span class="sub">${esc(S.promptsPath.split(/[\\/]/).pop())}</span><span class="spacer"></span>
+      ${S.promptsIsTxt ? `<button class="btn small" id="btnRawPrompts"></button><button class="btn small" id="btnAddPrompt">+ 프롬프트</button>` : ""}</div>
+    <div class="body prompt-layout"><div id="promptList"></div><div id="gallery"></div></div></section>`;
+}
+function renderPrompts() {
+  const box = $("#promptList");
+  if (!box) return;
+  const raw = S.pRaw || !S.promptsIsTxt;
+  if ($("#btnRawPrompts")) $("#btnRawPrompts").textContent = raw ? "칸으로 편집" : "텍스트로 편집";
+  if ($("#btnAddPrompt")) $("#btnAddPrompt").style.display = raw ? "none" : "";
+  if (raw) { box.innerHTML = `<div class="ctl"><textarea id="promptsText" rows="14" spellcheck="false">${esc(S.prompts)}</textarea></div>`; return; }
+  let n = 0;
+  box.innerHTML = S.pitems.map((it, i) => (it.raw !== undefined ? "" : promptCardHtml(it, i, ++n))).join("") || `<div class="empty">프롬프트가 없습니다</div>`;
+  updatePromptMarks();
+}
+function updatePromptMarks() {
+  document.querySelectorAll("[data-psize]").forEach(b => {
+    const it = S.pitems[+b.dataset.psize];
+    b.classList.toggle("on", +(it.w || 1024) === +b.dataset.w && +(it.h || 1024) === +b.dataset.h);
+  });
+}
+function setActivePrompt(i) {
+  if (S.pActive === i) return;
+  S.pActive = i;
+  document.querySelectorAll("[data-pcard]").forEach(c => c.classList.toggle("active", +c.dataset.pcard === i));
+  $(`[data-pcard="${i}"]`)?.scrollIntoView({ block: "nearest" });
+}
+function addPrompt() {
+  const last = [...S.pitems].reverse().find(it => it.raw === undefined);
+  S.pitems.push(last ? { ...last, prompt: "", extra: [...last.extra] } : { prompt: "", negative: "", w: "1024", h: "1024", s: "30", l: "", fs: "", d: "42", extra: [] });
+  S.pActive = S.pitems.length - 1;
+  renderPrompts();
+  $(`#p${S.pActive}_prompt`).focus();
+}
+function promptChanged() { S.prompts = serializePrompts(); markDirty(); }
+
+// 이미지를 누르면 파란 테두리 프롬프트의 긍정 칸에 캡션을 넣는다. 캡션 후보가 여럿이면 첫 후보를 넣고 고를 수 있게 한다
+const GALLERY_PAGE = 60;
+const G = { data: null, loading: false, folder: 0, filter: "", shown: GALLERY_PAGE, sel: null, cand: 0 };
+const thumbUrl = p => `/api/thumb?path=${encodeURIComponent(p)}`;
+async function ensureGallery() {
+  if (G.data || G.loading || !$("#gallery") || !$("#pane-output").classList.contains("on")) return;
+  G.loading = true; renderGallery();
+  try { G.data = await api(`/api/dataset_images?config=${encodeURIComponent(S.configPath)}`); }
+  catch (e) { G.data = { folders: [] }; toast(e.message, true); }
+  G.loading = false; G.folder = 0; renderGallery();
+}
+function galleryImages() {
+  const list = G.data?.folders[G.folder]?.images || [];
+  return G.filter ? list.filter(i => i.name.toLowerCase().includes(G.filter) || i.captions.some(c => c.toLowerCase().includes(G.filter))) : list;
+}
+function renderGallery() {
+  const box = $("#gallery");
+  if (!box) return;
+  if (!G.data) { box.innerHTML = `<div class="empty">${G.loading ? "이미지와 캡션을 읽는 중…" : ""}</div>`; return; }
+  if (!G.data.folders.length) { box.innerHTML = `<div class="empty">데이터셋 폴더에 이미지가 없습니다. 데이터셋 탭에서 학습 폴더를 고르세요.</div>`; return; }
+  box.innerHTML = `<div class="ghead"><b>데이터셋 이미지</b><span class="sub">저장된 데이터셋 기준 · 누르면 캡션이 들어갑니다</span></div>
+    <div class="gtools">${G.data.folders.length > 1 ? `<select id="gFolder">${G.data.folders.map((f, i) => `<option value="${i}" ${i === G.folder ? "selected" : ""}>${esc(f.name)} (${f.images.length})</option>`).join("")}</select>` : `<span class="gname">${esc(G.data.folders[0].name)} (${G.data.folders[0].images.length}장)</span>`}
+      <input type="text" id="gFilter" placeholder="파일 이름·캡션 검색" spellcheck="false" value="${esc(G.filter)}"></div>
+    <div class="gscroll"><div id="galleryGrid" class="ggrid"></div></div><div id="gallerySel"></div>`;
+  renderGalleryGrid();
+}
+function renderGalleryGrid() {
+  const box = $("#galleryGrid");
+  if (!box) return;
+  const list = galleryImages(), shown = list.slice(0, G.shown);
+  box.innerHTML = shown.map((img, i) => `<button class="gtile ${G.sel?.path === img.path ? "on" : ""} ${img.captions.length ? "" : "nocap"}" data-gimg="${i}" title="${esc(img.name + (img.captions[0] ? "\n" + img.captions[0].slice(0, 300) : "\n캡션 없음"))}"><img loading="lazy" src="${thumbUrl(img.path)}" alt=""></button>`).join("")
+    + (list.length > G.shown ? `<button class="btn small gmore" data-gmore="1">더 보기 (${list.length - G.shown}장 남음)</button>` : "")
+    + (list.length ? "" : `<div class="empty">검색 결과가 없습니다</div>`);
+  renderGallerySel();
+}
+function renderGallerySel() {
+  const box = $("#gallerySel"), img = G.sel;
+  if (!box) return;
+  box.innerHTML = !img ? "" : `<div class="gsel"><div class="gsel-head"><b>${esc(img.name)}</b>${img.captions.length > 1 ? img.captions.map((c, i) => `<button class="btn small ${i === G.cand ? "on" : ""}" data-gcand="${i}">후보 ${i + 1}</button>`).join("") : ""}</div><div class="gcap">${esc(img.captions[G.cand] || "")}</div></div>`;
+}
+function putCaption(text) {
+  if (S.pRaw) { parsePrompts(S.prompts); S.pRaw = false; renderPrompts(); }
+  if (S.pitems[S.pActive]?.prompt === undefined) addPrompt();
+  setInput($(`#p${S.pActive}_prompt`), text);
+  $(`[data-pcard="${S.pActive}"]`).scrollIntoView({ block: "nearest" });
+}
+function pickGalleryImage(img) {
+  if (!img.captions.length) { toast("이 이미지에는 캡션이 없습니다", true); return; }
+  G.sel = img; G.cand = 0;
+  putCaption(img.captions[0]);
+  renderGalleryGrid();
+}
+
+// ---------------------------------------------------------------- 자료 미리보기
+// 왼쪽은 저장된 폴더의 그림, 오른쪽 처리 결과는 화면의 버킷 값(저장 전 값 포함)으로 만든다
+const V = { data: null, loading: false, folder: 0, filter: "", shown: GALLERY_PAGE, sel: null, plan: null, error: "", query: "", seq: 0 };
+function previewQuery() {
+  const d = S.ds?.dataset || {};
+  return new URLSearchParams({ config: S.configPath, resolution: d.resolution ?? "", enable_bucket: d.enable_bucket ? 1 : 0, no_upscale: d.bucket_no_upscale ? 1 : 0, min: d.min_bucket_reso ?? "", max: d.max_bucket_reso ?? "", steps: d.bucket_reso_steps ?? "" }).toString();
+}
+const previewUrl = (kind, img = V.sel) => `/api/preview/image?path=${encodeURIComponent(img.path)}&kind=${kind}&${V.query}`;
+async function ensurePreview() {
+  if (!$("#pane-preview").classList.contains("on") || !S.configPath) return;
+  if (V.data) { if (V.sel && V.query !== previewQuery()) loadPlan(); return; }
+  if (V.loading) return;
+  V.loading = true; renderPreviewList();
+  try { V.data = await api(`/api/dataset_images?config=${encodeURIComponent(S.configPath)}`); }
+  catch (e) { V.data = { folders: [] }; toast(e.message, true); }
+  V.loading = false; V.folder = 0;
+  if (V.sel) { V.sel = V.data.folders.flatMap(f => f.images).find(i => i.path === V.sel.path) || null; V.plan = null; }
+  renderPreviewList();
+  if (V.sel) loadPlan(); else renderPreviewRight();
+}
+function previewImages() {
+  const list = V.data?.folders[V.folder]?.images || [];
+  return V.filter ? list.filter(i => i.name.toLowerCase().includes(V.filter)) : list;
+}
+function renderPreviewList() {
+  const box = $("#pvLeft");
+  if (!V.data) { box.innerHTML = `<div class="empty">${V.loading ? "이미지를 읽는 중…" : ""}</div>`; return; }
+  if (!V.data.folders.length) { box.innerHTML = `<div class="empty">데이터셋 폴더에 이미지가 없습니다. 데이터셋 탭에서 학습 폴더를 고르세요.</div>`; return; }
+  const f = V.data.folders;
+  box.innerHTML = `<div class="ghead"><b>폴더의 그림</b><span class="sub">저장된 데이터셋 기준</span></div>
+    <div class="gtools">${f.length > 1 ? `<select id="vFolder">${f.map((x, i) => `<option value="${i}" ${i === V.folder ? "selected" : ""}>${esc(x.name)} (${x.images.length})</option>`).join("")}</select>` : `<span class="gname">${esc(f[0].name)} (${f[0].images.length}장)</span>`}
+      <input type="text" id="vFilter" placeholder="파일 이름 검색" spellcheck="false" value="${esc(V.filter)}"></div>
+    <div class="pv-scroll"><div id="vGrid" class="ggrid"></div></div>`;
+  renderPreviewGrid();
+}
+function renderPreviewGrid() {
+  const box = $("#vGrid");
+  if (!box) return;
+  const list = previewImages();
+  box.innerHTML = list.slice(0, V.shown).map((img, i) => `<button class="gtile ${V.sel?.path === img.path ? "on" : ""}" data-vimg="${i}" title="${esc(img.name)}"><img loading="lazy" src="${thumbUrl(img.path)}" alt=""></button>`).join("")
+    + (list.length > V.shown ? `<button class="btn small gmore" data-vmore="1">더 보기 (${list.length - V.shown}장 남음)</button>` : "")
+    + (list.length ? "" : `<div class="empty">검색 결과가 없습니다</div>`);
+}
+function selectPreview(img) {
+  V.sel = img;
+  document.querySelectorAll("#vGrid .gtile").forEach(t => t.classList.toggle("on", previewImages()[+t.dataset.vimg] === img));
+  loadPlan();
+}
+async function loadPlan() {
+  const seq = ++V.seq;
+  V.query = previewQuery(); V.plan = null; V.error = ""; renderPreviewRight();
+  try {
+    const plan = await api(`/api/preview/plan?path=${encodeURIComponent(V.sel.path)}&${V.query}`);
+    if (seq === V.seq) V.plan = plan;
+  } catch (e) { if (seq === V.seq) V.error = e.message; }
+  if (seq === V.seq) renderPreviewRight();
+}
+const mp = (w, h) => `${(w * h / 1e6).toFixed(2)}MP`;
+function previewFlowHtml(p) {
+  const [ow, oh] = p.orig, [rw, rh] = p.resized, [bw, bh] = p.bucket, cutW = rw - bw, cutH = rh - bh;
+  const steps = [`원본 <b>${ow}×${oh}</b> · ${mp(ow, oh)}`];
+  steps.push(p.method ? `${rw > ow || rh > oh ? "확대" : "축소"}(${esc(p.method)}) ${(rw / ow).toFixed(3)}배 → <b>${rw}×${rh}</b>` : "리사이즈 없음");
+  if (cutW || cutH) steps.push(`잘림 ${[cutW && `가로 ${cutW}px`, cutH && `세로 ${cutH}px`].filter(Boolean).join(" · ")} (${((1 - bw * bh / (rw * rh)) * 100).toFixed(2)}%)`);
+  else steps.push("잘림 없음");
+  steps.push(`학습 크기 <b>${bw}×${bh}</b> · ${mp(bw, bh)}`);
+  return steps.join(`<span class="arrow">→</span>`);
+}
+function renderPreviewRight() {
+  const box = $("#pvRight"), img = V.sel, p = V.plan, d = S.ds?.dataset;
+  if (!img) { box.innerHTML = `<div class="empty">왼쪽에서 그림을 고르세요</div>`; return; }
+  const head = `<div class="pv-name">${esc(img.name)}</div>`;
+  if (V.error) { box.innerHTML = `<div class="pv-info">${head}<div class="pv-flow">${esc(V.error)}</div></div>`; return; }
+  if (!p) { box.innerHTML = `<div class="pv-info">${head}<div class="pv-flow">처리 준비 중… 처음 한 번은 작업 프로세스를 띄우느라 시간이 걸립니다</div></div>`; return; }
+  const set = [`해상도 ${d.resolution}`, d.enable_bucket ? "버킷 켬" : "버킷 끔", d.enable_bucket && (d.bucket_no_upscale ? "업스케일 안 함" : "업스케일 사용"), d.enable_bucket && `간격 ${d.bucket_reso_steps || 64}`, p.npz ? "VAE 캐시 있음" : "VAE 캐시 없음"].filter(Boolean).join(" · ");
+  box.innerHTML = `<div class="pv-info">${head}<div class="pv-flow">${previewFlowHtml(p)}</div><div class="pv-set">${esc(set)}</div></div>
+    <button class="pv-card" data-vopen="single"><div class="head">처리된 그림<span>클릭하면 전체 화면에서 실제 크기로 봅니다</span></div><div class="pv-one"><img src="${previewUrl("processed")}" alt=""></div></button>
+    <button class="pv-card" data-vopen="compare"><div class="head">처리 전 · 처리 후 · VAE 처리 후<span>클릭하면 3분할 전체 화면으로 비교합니다</span></div><div class="pv-three">
+      <figure><figcaption>처리 전</figcaption><img loading="lazy" src="${thumbUrl(img.path)}" alt=""></figure>
+      <figure><figcaption>처리 후</figcaption><img src="${previewUrl("processed")}" alt=""></figure>
+      <figure><figcaption>VAE 처리 후</figcaption>${p.vae_done ? `<img src="${previewUrl("vae")}" alt="">` : `<div class="pv-wait">클릭하면 CPU 로 처리합니다<br>그림 한 장에 시간이 걸립니다</div>`}</figure>
+    </div></button>`;
+}
+
+// 전체 화면 보기. 좌표는 처리 후 그림 기준이고, 배율 100% 는 그림 1픽셀이 화면 장치 픽셀 1개다
+const ZOOM_STEPS = [0.1, 0.25, 0.33, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 16];
+const PAN_KEYS = { KeyW: [0, -1], KeyA: [-1, 0], KeyS: [0, 1], KeyD: [1, 0] };  // 한글 입력 중에도 되도록 e.key 대신 e.code
+const PAN_SPEED = 1000;  // 장치 픽셀/초
+const VW = { open: false, panes: [], zoom: 1, cx: 0, cy: 0, box: null, keys: new Set(), drag: null, frame: 0, last: 0, abort: null, ro: null };
+function openViewer(mode) {
+  const p = V.plan;
+  if (!p) return;
+  const [ow, oh] = p.orig, [rw, rh] = p.resized, [bw, bh] = p.bucket, sx = rw / ow, sy = rh / oh;
+  const after = { title: "처리 후", sub: `${bw}×${bh}`, url: previewUrl("processed"), x: 0, y: 0, sx: 1, sy: 1 };
+  const panes = mode === "single" ? [after] : [
+    { title: "처리 전", sub: `${ow}×${oh}${rw !== bw || rh !== bh ? " · 점선 밖은 잘림" : ""}`, url: `/api/image?path=${encodeURIComponent(V.sel.path)}`, x: -p.crop[0], y: -p.crop[1], sx, sy, frame: rw !== bw || rh !== bh ? [bw, bh] : null },
+    after,
+    { title: "VAE 처리 후", sub: p.npz ? "학습 캐시 latent 복원" : "인코딩 후 복원", url: previewUrl("vae"), x: 0, y: 0, sx: 1, sy: 1, wait: "VAE 처리 중" },
+  ];
+  Object.assign(VW, { open: true, panes, zoom: 1, cx: bw / 2, cy: bh / 2, keys: new Set(), drag: null, abort: new AbortController(), ro: new ResizeObserver(vwResize) });
+  VW.box = mode === "single" ? { x0: 0, y0: 0, x1: bw, y1: bh } : { x0: -p.crop[0], y0: -p.crop[1], x1: rw - p.crop[0], y1: rh - p.crop[1] };
+  $("#vwPanes").innerHTML = panes.map(q => `<div class="vw-pane"><canvas></canvas><div class="vw-label">${esc(q.title)}<span>${esc(q.sub)}</span></div><div class="vw-msg"></div></div>`).join("");
+  document.querySelectorAll("#vwPanes .vw-pane").forEach((el, i) => {
+    panes[i].canvas = el.querySelector("canvas"); panes[i].msg = el.querySelector(".vw-msg");
+    VW.ro.observe(panes[i].canvas);
+    loadViewerImage(panes[i]);
+  });
+  const viewer = $("#viewer");
+  viewer.hidden = false;
+  viewer.focus();
+  viewer.requestFullscreen?.().catch(() => {});  // 막혀도 창 전체로 보인다
+  vwDraw();
+}
+async function loadViewerImage(pane) {
+  const t0 = performance.now(), wait = pane.wait || "불러오는 중";
+  const tick = () => { pane.msg.textContent = `${wait}… ${Math.round((performance.now() - t0) / 1000)}초`; };
+  tick();
+  const timer = setInterval(tick, 1000);
+  try {
+    const r = await fetch(pane.url, { signal: VW.abort.signal });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+    pane.bmp = await createImageBitmap(await r.blob());
+    pane.msg.textContent = "";
+    vwDraw();
+  } catch (e) { if (e.name !== "AbortError") pane.msg.textContent = e.message; }
+  clearInterval(timer);
+}
+function closeViewer() {
+  if (!VW.open) return;
+  VW.open = false;
+  VW.abort.abort(); VW.ro.disconnect();
+  cancelAnimationFrame(VW.frame); VW.frame = 0;
+  VW.panes.forEach(q => q.bmp?.close());
+  VW.panes = [];
+  $("#viewer").hidden = true; $("#vwPanes").innerHTML = "";
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  if (V.sel) loadPlan();  // VAE 결과가 생겼으면 오른쪽 칸에 보여 준다
+}
+function vwResize(entries) {
+  for (const e of entries) {
+    const b = e.devicePixelContentBoxSize?.[0];
+    e.target.width = b ? b.inlineSize : Math.round(e.contentRect.width * devicePixelRatio);
+    e.target.height = b ? b.blockSize : Math.round(e.contentRect.height * devicePixelRatio);
+  }
+  vwDraw();
+}
+function vwDraw() { if (VW.open && !VW.frame) VW.frame = requestAnimationFrame(vwPaint); }
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+function vwPaint(now) {
+  VW.frame = 0;
+  if (VW.keys.size) {
+    const dt = VW.last ? (now - VW.last) / 1000 : 0, step = PAN_SPEED * dt / VW.zoom;
+    for (const k of VW.keys) { VW.cx += PAN_KEYS[k][0] * step; VW.cy += PAN_KEYS[k][1] * step; }
+    VW.last = now;
+  } else VW.last = 0;
+  VW.cx = clamp(VW.cx, VW.box.x0, VW.box.x1); VW.cy = clamp(VW.cy, VW.box.y0, VW.box.y1);
+  for (const q of VW.panes) {
+    const c = q.canvas, ctx = c.getContext("2d");
+    ctx.fillStyle = "#0b0b0a"; ctx.fillRect(0, 0, c.width, c.height);
+    const left = Math.round(c.width / 2 - VW.cx * VW.zoom), top = Math.round(c.height / 2 - VW.cy * VW.zoom);  // 픽셀이 화면 격자에 맞게 정수로
+    if (q.bmp) {
+      ctx.imageSmoothingEnabled = VW.zoom * q.sx < 1; ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(q.bmp, left + Math.round(q.x * VW.zoom), top + Math.round(q.y * VW.zoom), Math.round(q.bmp.width * q.sx * VW.zoom), Math.round(q.bmp.height * q.sy * VW.zoom));
+    }
+    if (q.frame) {
+      ctx.setLineDash([6, 4]); ctx.lineWidth = 1; ctx.strokeStyle = "#ffd75e";
+      ctx.strokeRect(left + 0.5, top + 0.5, q.frame[0] * VW.zoom, q.frame[1] * VW.zoom);
+    }
+  }
+  $("#vwZoom").textContent = `${Math.round(VW.zoom * 100)}%`;
+  if (VW.keys.size) vwDraw();
+}
+function vwWheel(e) {
+  e.preventDefault();
+  const c = e.target.closest(".vw-pane")?.querySelector("canvas");
+  if (!c) return;
+  const i = ZOOM_STEPS.indexOf(VW.zoom) + (e.deltaY < 0 ? 1 : -1), zoom = ZOOM_STEPS[clamp(i, 0, ZOOM_STEPS.length - 1)];
+  const r = c.getBoundingClientRect(), mx = (e.clientX - r.left) * c.width / r.width - c.width / 2, my = (e.clientY - r.top) * c.height / r.height - c.height / 2;
+  VW.cx += mx / VW.zoom - mx / zoom; VW.cy += my / VW.zoom - my / zoom;  // 커서 아래 지점을 고정한다
+  VW.zoom = zoom;
+  vwDraw();
+}
+function vwPointer(e) {
+  const viewer = $("#viewer");
+  if (e.type === "pointerdown") {
+    if (e.button !== 0) return;
+    VW.drag = { x: e.clientX, y: e.clientY };
+    viewer.setPointerCapture(e.pointerId); viewer.classList.add("drag");
+  } else if (!VW.drag) return;
+  else if (e.type === "pointermove") {
+    VW.cx -= (e.clientX - VW.drag.x) * devicePixelRatio / VW.zoom; VW.cy -= (e.clientY - VW.drag.y) * devicePixelRatio / VW.zoom;
+    VW.cx = clamp(VW.cx, VW.box.x0, VW.box.x1); VW.cy = clamp(VW.cy, VW.box.y0, VW.box.y1);
+    VW.drag = { x: e.clientX, y: e.clientY };
+    vwDraw();
+  } else { VW.drag = null; viewer.classList.remove("drag"); }
+}
+
+function fieldById(id) {
+  if (id.startsWith("c_")) return { f: findF(CFG_GROUPS.flatMap(g => g.items), id.slice(2)), obj: S.cfg, key: id.slice(2) };
+  if (id.startsWith("g_")) return { f: findF(DS_GENERAL, id.slice(2)), obj: S.ds.general, key: id.slice(2) };
+  if (id.startsWith("d_")) return { f: findF(DS_DATASET, id.slice(2)), obj: S.ds.dataset, key: id.slice(2) };
+  const m = id.match(/^s(\d+)_(.+)$/);
+  if (m) return { f: findF(DS_SUBSET, m[2]), obj: S.ds.subsets[+m[1]], key: m[2] };
+  const p = id.match(/^p(\d+)_(.+)$/);
+  if (p) return { f: findF(PROMPT_FIELDS, p[2]), obj: S.pitems[+p[1]], key: p[2] };
+  return null;
+}
+const findF = (arr, k) => arr.find(f => f.k === k);
+
+function onInput(e) {
+  const el = e.target;
+  if (el.id === "extraArgs") { S.extraArgs = el.value; try { localStorage.setItem("moss_ui_extra", el.value); } catch (err) {} updateCmd(); return; }
+  if (el.id === "promptsText") { S.prompts = el.value; markDirty(); return; }
+  if (el.id === "gFilter") { G.filter = el.value.trim().toLowerCase(); G.shown = GALLERY_PAGE; renderGalleryGrid(); return; }
+  if (el.id === "gFolder") { G.folder = +el.value; G.shown = GALLERY_PAGE; renderGalleryGrid(); return; }
+  if (el.id === "resumeSelect") { S.resume = el.value; renderResume(); updateCmd(); return; }
+  if (el.id === "vFilter") { V.filter = el.value.trim().toLowerCase(); V.shown = GALLERY_PAGE; renderPreviewGrid(); return; }
+  if (el.id === "vFolder") { V.folder = +el.value; V.shown = GALLERY_PAGE; renderPreviewGrid(); return; }
+  if (el.dataset.lrslider !== undefined) { onLrSlider(el); return; }
+  const fx = el.id && fieldById(el.id);
+  if (!fx || !fx.f || !fx.obj) return;  // 칸을 지운 뒤 포커스가 남은 입력칸이 다시 그려지며 change 를 보낼 수 있다
+  const v = fx.f.t === "bool" ? el.checked : el.value;
+  fx.obj[fx.key] = v;
+  if (isPromptId(el.id)) { S.prompts = serializePrompts(); updatePromptMarks(); updatePromptMini(+el.id.match(/^p(\d+)_/)[1]); }
+  if (OUT_PATHS.some(p => p[1] === fx.key)) updateOutSummary();
+  if (ESTIMATE_KEYS.has(fx.key)) updateStepEstimate();
+  if (BUCKET_KEYS.has(fx.key)) updateBucketRows();
+  if (fx.f.slider) {
+    const s = $("[data-lrslider]"), pos = lrSliderPos(v);
+    if (s && Math.abs(s.value - pos) > 0.03) s.value = pos;  // 끄는 중에는 반올림으로 손잡이가 떨리지 않게 둔다
+  }
+  el.style.borderColor = validNum(fx.f, v) ? "" : "var(--bad)";
+  const row = document.querySelector(`[data-row="${el.id}"]`);
+  if (row) row.classList.toggle("changed", isChanged(el.id));
+  markDirty();
+  updatePresetMarks();
+  if (fx.f.t === "file" || fx.f.t === "dir") $(`[data-pathbadge="${fx.f.k}"]`)?.replaceChildren();
+}
+function setInput(el, value) {
+  el.value = value;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+function onLrSlider(el) {
+  const near = LR_SLIDER.points.find(p => Math.abs(el.value - p) <= LR_SLIDER.snap);
+  if (near !== undefined) el.value = near;
+  setInput($("#c_learning_rate"), near !== undefined ? Number(`1e${near}`) : Number((10 ** el.value).toPrecision(2)));
+}
+// 1, 2, … 9, 10, 20 처럼 맨 앞자리를 바꾼다. 자릿수 경계에서 내려갈 때만 한 자리 아래로 내려간다
+function logStep(v, dir) {
+  const exp = Math.floor(Math.log10(v) + 1e-9), atDecade = Math.abs(v / Number(`1e${exp}`) - 1) < 1e-9;
+  return Number((v + dir * Number(`1e${dir < 0 && atDecade ? exp - 1 : exp}`)).toPrecision(3));
+}
+function spinValue(id, dir) {
+  const el = $("#" + id), f = fieldById(id).f, sp = f.spin, cur = parseFloat(el.value || f.d);
+  const next = sp.log ? logStep(cur > 0 ? cur : sp.base, dir) : +((isFinite(cur) ? cur : sp.min) + dir * (sp.step ?? 1)).toFixed(6);
+  setInput(el, Math.min(sp.max ?? Infinity, Math.max(sp.min, next)));
+}
+const isPromptId = id => /^p\d+_/.test(id);
+function isChanged(id) {
+  if (isPromptId(id)) return false;
+  const fx = fieldById(id);
+  let o;
+  if (id.startsWith("c_")) o = S.orig[fx.key];
+  else if (id.startsWith("g_")) o = S.dsOrig.general[fx.key];
+  else if (id.startsWith("d_")) o = S.dsOrig.dataset[fx.key];
+  else o = (S.dsOrig.subsets[+id.match(/^s(\d+)/)[1]] || {})[fx.key];
+  return fx.obj[fx.key] !== o;
+}
+function collectChanges() {
+  const config = {};
+  for (const g of CFG_GROUPS) for (const f of g.items) if (S.cfg[f.k] !== S.orig[f.k]) config[f.k] = toSave(f, S.cfg[f.k]);
+  let dataset = null;
+  if (S.ds) {
+    dataset = { general: {}, dataset: {}, subsets: [], remove_subsets: S.removedSubsets.slice() };
+    for (const f of DS_GENERAL) if (S.ds.general[f.k] !== S.dsOrig.general[f.k]) dataset.general[f.k] = toSave(f, S.ds.general[f.k]);
+    for (const f of DS_DATASET) if (S.ds.dataset[f.k] !== S.dsOrig.dataset[f.k]) dataset.dataset[f.k] = toSave(f, S.ds.dataset[f.k]);
+    S.ds.subsets.forEach((sub, i) => {
+      const o = S.dsOrig.subsets[i] || {}, ch = {};
+      for (const f of DS_SUBSET) if (sub[f.k] !== o[f.k] || !S.dsOrig.subsets[i]) {
+        const v = toSave(f, sub[f.k]);
+        if (!S.dsOrig.subsets[i] && (v === null || v === false)) continue;  // 새 칸은 기본값을 쓰지 않는다
+        if (v !== null || o[f.k] !== undefined) ch[f.k] = v;
+      }
+      dataset.subsets.push(ch);
+    });
+  }
+  const prompts = S.prompts !== null && S.prompts !== S.promptsOrig ? S.prompts : null;
+  return { config, dataset, prompts };
+}
+function hasChanges() {
+  const c = collectChanges();
+  return Object.keys(c.config).length || c.prompts !== null || (c.dataset && (Object.keys(c.dataset.general).length || Object.keys(c.dataset.dataset).length || c.dataset.remove_subsets.length || c.dataset.subsets.some(s => Object.keys(s).length)));
+}
+const TRAIN_TAB_DS_KEYS = new Set(["batch_size", "num_repeats"]);  // dataset.toml 값이지만 학습 설정 탭에 있다
+function markDirty() {
+  // 바뀐 항목이 속한 탭에 점을 찍는다
+  const c = collectChanges(), dirty = new Set(Object.keys(c.config).map(k => KEY_TAB[k]));
+  if (c.dataset) {
+    const keys = [c.dataset.general, c.dataset.dataset, ...c.dataset.subsets].flatMap(Object.keys);
+    if (c.dataset.remove_subsets.length || keys.some(k => !TRAIN_TAB_DS_KEYS.has(k))) dirty.add("dataset");
+    if (keys.some(k => TRAIN_TAB_DS_KEYS.has(k))) dirty.add("train");
+  }
+  if (c.prompts !== null) dirty.add("output");
+  document.querySelectorAll("#tabs .tab").forEach(t => t.classList.toggle("dirty", dirty.has(t.dataset.pane)));
+  $("#hdr").classList.toggle("dirty", dirty.size > 0);
+  updateSubs();
+}
+
+function updateSubs() {
+  const c = S.cfg, set = (id, t) => { const el = $("#sub-" + id); if (el) el.textContent = t; };
+  set("train", [c.network_dim && `dim ${c.network_dim}`, c.learning_rate && `lr ${c.learning_rate}`, c.max_train_epochs && `${c.max_train_epochs} 에포크`].filter(Boolean).join(" · "));
+  set("timestep", c.timestep_sampling || "sigmoid");
+  set("memory", [c.convrot_int8 ? "INT8" : "bf16", +c.blocks_to_swap ? `스왑 ${c.blocks_to_swap}` : "", c.gradient_checkpointing ? "GC" : "", c.attn_mode ? "FA2" : ""].filter(Boolean).join(" · "));
+  set("output", c.output_name || "");
+  set("dataset", S.check?.dataset ? `${S.check.dataset.samples_per_epoch}장/에포크` : "");
+  set("model", S.check ? (["pretrained_model_name_or_path", "text_encoder", "vae"].every(k => S.check.paths[k]?.state === "ok") ? "파일 확인됨" : "파일 확인 필요") : "");
+}
+function updatePresetMarks() {
+  const c = S.cfg;
+  document.querySelectorAll("[data-rankpreset]").forEach(b => { const p = RANK_PRESETS[+b.dataset.rankpreset].v; b.classList.toggle("on", +c.network_dim === +p.network_dim && +c.network_alpha === +p.network_alpha); });
+  document.querySelectorAll("[data-tspreset]").forEach(b => { const p = TS_PRESETS[+b.dataset.tspreset].v; b.classList.toggle("on", Object.entries(p).every(([k, v]) => String(c[k] ?? "") === v || +c[k] === +v)); });
+  document.querySelectorAll("[data-vram]").forEach(b => { const p = VRAM_PRESETS[+b.dataset.vram].v; b.classList.toggle("on", Object.entries(p).every(([k, v]) => typeof v === "boolean" ? !!c[k] === v : String(c[k] ?? "") === v || (v === "" && !+c[k]))); });
+}
+function applyPreset(vals) {
+  for (const [k, v] of Object.entries(vals)) {
+    S.cfg[k] = v;
+    const el = $("#c_" + k); if (!el) continue;
+    if (el.type === "checkbox") el.checked = v; else el.value = v;
+    $(`[data-row="c_${k}"]`)?.classList.toggle("changed", isChanged("c_" + k));
+  }
+  markDirty(); updatePresetMarks();
+}
+function updateBadges() {
+  if (!S.check) return;
+  for (const [k, info] of Object.entries(S.check.paths || {})) {
+    const b = $(`[data-pathbadge="${k}"]`); if (!b) continue;
+    const st = info.state;
+    b.className = "badge " + (st === "ok" ? (info.note ? "note" : "ok") : st === "empty" ? "" : "bad");
+    b.textContent = st === "ok" ? (info.note || (info.size ? fmtSize(info.size) : "있음")) : st === "empty" ? "" : (info.note || "없음");
+  }
+}
+
+// ---------------------------------------------------------------- 불러오기·저장
+async function load(configPath) {
+  const d = await api("/api/load" + (configPath ? "?config=" + encodeURIComponent(configPath) : ""));
+  S.configPath = d.config_path; S.configs = d.configs; S.triton = d.triton; S.flash = d.flash;
+  try { localStorage.setItem("moss_ui_config", S.configPath); } catch (e) {}
+  S.absWarmup = d.config.lr_warmup_steps >= 1 ? d.config.lr_warmup_steps : 0;
+  S.cfg = {}; S.orig = {};
+  for (const g of CFG_GROUPS) for (const f of g.items) S.cfg[f.k] = S.orig[f.k] = toEdit(f, d.config[f.k]);
+  S.ds = S.dsOrig = null; S.removedSubsets = [];
+  if (d.dataset) {
+    const conv = (fields, o) => Object.fromEntries(fields.map(f => [f.k, toEdit(f, o[f.k])]));
+    const mk = () => ({ path: d.dataset.path, general: conv(DS_GENERAL, d.dataset.general), dataset: conv(DS_DATASET, d.dataset.dataset), subsets: d.dataset.subsets.map(s => conv(DS_SUBSET, s)) });
+    S.ds = mk(); S.dsOrig = mk();
+  }
+  S.prompts = S.promptsOrig = d.prompts ? d.prompts.text : null;
+  S.promptsPath = d.prompts?.path || ""; S.promptsIsTxt = S.promptsPath.toLowerCase().endsWith(".txt");
+  S.pitems = []; S.pRaw = false;
+  if (S.prompts !== null) parsePrompts(S.prompts);
+  G.data = null; G.sel = null; V.data = null;
+  const cfgOption = p => `<option value="${esc(p)}" ${p === S.configPath ? "selected" : ""}>${esc(p.split(/[\\/]/).pop().replace(/\.toml$/, ""))}</option>`;
+  const isProfile = p => /[\\/]profiles[\\/]/.test(p), profiles = S.configs.filter(isProfile);
+  $("#cfgSelect").innerHTML = S.configs.filter(p => !isProfile(p)).map(cfgOption).join("")
+    + (profiles.length ? `<optgroup label="LoRA별 설정">${profiles.map(cfgOption).join("")}</optgroup>` : "");
+  renderLeft(); markDirty(); updateCmd(); initPicker(); ensurePreview();
+  runCheck(); refreshRuns(); refreshOutputs(); refreshResume();
+}
+function numbersValid() {
+  for (const el of document.querySelectorAll("#main input[type=text]")) {
+    const fx = fieldById(el.id); if (fx?.f && !validNum(fx.f, el.value)) { toast(`${fx.f.l}: 숫자 형식이 아닙니다`, true); el.focus(); return false; }
+  }
+  return true;
+}
+function showSaveAs(on) {
+  $("#saveAsBox").hidden = !on; $("#btnSaveAs").hidden = on;
+  if (on) { $("#saveAsName").value = S.cfg.output_name || ""; $("#saveAsName").focus(); $("#saveAsName").select(); }
+}
+async function saveAs() {
+  const name = $("#saveAsName").value.trim();
+  if (!name) { toast("이름을 입력하세요", true); return; }
+  if (!numbersValid()) return;
+  try {
+    const r = await api("/api/save_profile", { config_path: S.configPath, name, ...collectChanges() });
+    showSaveAs(false);
+    await load(r.config_path);
+    toast(`'${name}' 설정으로 저장했습니다. 출력 파일 이름도 ${name} 로 맞췄습니다`);
+  } catch (e) { toast("저장 실패: " + e.message, true); }
+}
+async function save(quiet) {
+  const ch = collectChanges();
+  if (!hasChanges()) { if (!quiet) toast("바뀐 내용이 없습니다"); return true; }
+  if (!numbersValid()) return false;
+  try {
+    const r = await api("/api/save", { config_path: S.configPath, ...ch });
+    toast(r.saved.length ? "저장: " + r.saved.map(p => p.split(/[\\/]/).pop()).join(", ") : "저장할 내용이 없습니다");
+    await load(S.configPath);
+    return true;
+  } catch (e) { toast("저장 실패: " + e.message, true); return false; }
+}
+
+// ---------------------------------------------------------------- 점검 탭
+let checking = false;
+async function runCheck() {
+  // 폴더가 크면 수 초 걸린다 — 진행 중임을 버튼과 데이터셋 통계 자리에 표시
+  checking = true; setCheckBusy();
+  try { S.check = await api("/api/check?config=" + encodeURIComponent(S.configPath)); }
+  catch (e) { toast("점검 실패: " + e.message, true); }
+  checking = false; setCheckBusy(); renderDsStats();
+  if (!S.check) return;
+  renderCheck(); updateBadges(); updateOutSummary(); updateSubs();
+}
+function setCheckBusy() {
+  const b = $("#btnCheck"); b.disabled = checking; b.textContent = checking ? "점검 중…" : "다시 점검";
+  const st = $("#dsStats"); if (st && checking && !st.dataset.busy) { st.dataset.busy = "1"; st.insertAdjacentHTML("afterbegin", `<div class="help" style="margin:8px 0" id="dsBusy">데이터셋 점검 중…</div>`); }
+}
+const ISSUE_LABEL = { error: "오류", warn: "주의", info: "참고" };
+const issueLi = (i, link) => `<li class="${i.level}"><span class="ic">${ISSUE_LABEL[i.level]}</span><span style="flex:1">${esc(i.msg)}</span>`
+  + (link && i.tab && i.tab !== "run" ? `<button class="btn small" data-goto="${i.tab}">${TAB_LABEL[i.tab]}</button>` : "") + `</li>`;
+function renderCheck() {
+  const c = S.check;
+  // 탭마다 그 탭의 점검 항목과 배지
+  for (const t of ["dataset", "train", "memory", "output", "run"]) {
+    const list = c.issues.filter(i => (i.tab || "run") === t);
+    const box = document.querySelector(`[data-issues="${t}"]`);
+    if (box) box.innerHTML = list.length ? `<ul class="issues">${list.map(i => issueLi(i)).join("")}</ul>` : "";
+    const scope = t === "run" ? c.issues : list;  // 실행 탭 배지는 전체 합계
+    const e = scope.filter(i => i.level === "error").length, w = scope.filter(i => i.level === "warn").length;
+    const tb = document.querySelector(`[data-tb="${t}"]`);
+    tb.className = "tb" + (e ? " err" : w ? " warn" : ""); tb.textContent = e || w || "";
+    tb.title = `오류 ${e} · 주의 ${w}`;
+  }
+  $("#runIssues").innerHTML = `<div class="help" style="margin:0 0 8px">${esc(S.configPath)}</div><ul class="issues">`
+    + (c.issues.length ? c.issues.map(i => issueLi(i, true)).join("") : `<li class="okmsg"><span class="ic">OK</span><span>문제가 없습니다</span></li>`) + `</ul>`;
+  renderDsStats();
+  renderRunStart();
+  updateStepEstimate();
+}
+function renderRunStart() {
+  const c = S.check, ds = c?.dataset, e = c ? c.issues.filter(i => i.level === "error").length : 0;
+  $("#runStart").innerHTML = `<div class="kpis" style="margin-bottom:10px">
+      <div class="kpi"><div class="k">이미지 폴더</div><div class="v">${S.ds ? S.ds.subsets.length : "–"}</div></div>
+      <div class="kpi"><div class="k">에포크당 스텝</div><div class="v" data-est="perEpoch">–</div></div>
+      <div class="kpi"><div class="k">총 스텝 (예상)</div><div class="v" data-est="total">–</div></div>
+      <div class="kpi"><div class="k">DiT</div><div class="v" style="font-size:15px">${S.cfg.convrot_int8 ? "INT8" : "bf16"}</div></div>
+    </div>
+    ${e ? `<div style="color:#ffb3b3;margin-bottom:8px">오류 ${e}개 — 왼쪽 목록에서 해당 탭으로 가서 고치세요. 그래도 시작하려면 두 번 누릅니다.</div>` : ""}
+    <div id="runResume"></div>
+    <button class="btn primary" id="btnStart2" style="width:100%;padding:9px">학습 시작</button>
+    <div class="help" style="margin:6px 0 0">시작하면 저장 후 실행하고 모니터 탭으로 이동합니다.</div>`;
+  $("#btnStart2").disabled = S.running;
+  renderResume();
+  updateStepEstimate();
+}
+// 이어서 학습: 출력 폴더의 상태 폴더를 고르면 시작 버튼이 그 지점부터 잇는다
+async function refreshResume() {
+  if (!S.configPath) return;
+  try { S.resumeStates = await api(`/api/resume_states?config=${encodeURIComponent(S.configPath)}`); }
+  catch (e) { S.resumeStates = []; }
+  if (!S.resumeStates.some(x => x.path === S.resume)) S.resume = "";
+  renderResume();
+  updateCmd();
+}
+function resumeLabel(x) {
+  const d = new Date(x.time * 1000), pad = v => String(v).padStart(2, "0");
+  const steps = x.total ? `${x.step.toLocaleString()} / ${x.total.toLocaleString()} 스텝` : `${x.step.toLocaleString()} 스텝`;
+  return `${x.name.replace(/-state$/, "")} · ${steps} · ${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())} · ${(x.size / 1024 ** 3).toFixed(1)}GB`;
+}
+function renderResume() {
+  const label = S.resume ? "이어서 학습" : "학습 시작", box = $("#runResume"), list = S.resumeStates || [];
+  $("#btnStart").textContent = label;
+  if ($("#btnStart2")) $("#btnStart2").textContent = label;
+  if (!box) return;
+  const sel = list.find(x => x.path === S.resume);
+  box.innerHTML = `<div class="resume"><label for="resumeSelect">이어서 학습</label>
+      <select id="resumeSelect" ${list.length ? "" : "disabled"}><option value="">${list.length ? "처음부터 새로 학습" : "이어할 중단 지점 없음 · 처음부터 새로 학습"}</option>${list.map(x => `<option value="${esc(x.path)}" ${x.path === S.resume ? "selected" : ""}>${esc(resumeLabel(x))}</option>`).join("")}</select></div>
+    ${(sel?.warnings || []).map(w => `<div class="resume-warn">⚠ ${esc(w)}</div>`).join("")}
+    ${sel ? `<div class="help" style="margin:4px 0 8px">이어갈 때는 데이터셋·배치·반복·Rank 를 저장 당시와 같게 두세요. 에포크를 늘려도 학습률 스케줄은 처음 총 스텝 기준으로 이어집니다.</div>` : ""}`;
+}
+function renderDsStats() {
+  const box = $("#dsStats"); if (!box) return;
+  const ds = S.check?.dataset;
+  if (!ds) { box.innerHTML = checking ? `<div class="help" style="margin:8px 0">데이터셋 점검 중…</div>` : ""; return; }
+  let h = "";
+  {
+    const imgs = ds.subsets.reduce((a, s) => a + (s.num_images || 0), 0);
+    const lat = ds.subsets.reduce((a, s) => a + (s.latent_cached || 0), 0), te = ds.subsets.reduce((a, s) => a + (s.te_cached || 0), 0);
+    h += `<h3>데이터셋 점검 <span style="font-weight:400;color:var(--text-muted)">— 저장된 dataset.toml 기준</span></h3><div class="kpis">
+      <div class="kpi"><div class="k">이미지</div><div class="v">${imgs}</div></div>
+      <div class="kpi"><div class="k">latent 캐시</div><div class="v">${lat}<small> / ${imgs}</small></div></div>
+      <div class="kpi"><div class="k">TE 출력 캐시</div><div class="v">${te}<small> / ${imgs}</small></div></div>
+    </div><div class="help" style="margin:6px 0 0">캐시는 학습 시작 시 자동 생성(이미지 폴더 안 *_moss.npz).</div>`;
+    for (const s of ds.subsets) {
+      const idx = S.ds?.subsets.findIndex(x => x.image_dir === s.image_dir) ?? -1;  // 파일에서만 빼고 폴더는 지우지 않는다
+      h += `<div class="subcard"><div class="subcard-head"><div class="path">${esc(s.image_dir)}</div>
+        <button class="btn small" data-opendir="${esc(s.image_dir)}">폴더 열기</button>
+        ${idx >= 0 && S.ds.subsets.length > 1 ? `<button class="btn small danger" data-rmsub="${idx}" title="학습 목록에서만 뺍니다. 폴더와 그림은 지우지 않습니다">삭제</button>` : ""}</div>`;
+      if (!s.ok) { h += `<div style="color:var(--bad);margin-top:4px">${esc(s.error)}</div></div>`; continue; }
+      h += `<table>
+        <tr><td>이미지 × 반복</td><td>${s.num_images}${s.truncated ? "+" : ""} × ${s.num_repeats}</td></tr>
+        <tr><td>캡션 (${esc(s.caption_extension)})</td><td>${s.num_images - s.no_caption_count - s.empty_caption_count}장 있음 · 평균 ${s.avg_caption_chars}자 · 최대 ${s.max_caption_chars}자${s.multi_candidate ? ` · 후보 여러 개 ${s.multi_candidate}장` : ""}</td></tr>
+        <tr><td>해상도 분포</td><td>${s.top_sizes.map(([k, n]) => `${k} (${n})`).join(", ") || "–"}</td></tr>
+      </table>`;
+      const list = (title, arr, n) => n ? `<details><summary>${title} ${n}장</summary><ul>${arr.map(x => `<li>${esc(x)}</li>`).join("")}${n > arr.length ? `<li>… 외 ${n - arr.length}</li>` : ""}</ul></details>` : "";
+      h += list("캡션 없음", s.no_caption, s.no_caption_count) + list("빈 캡션", s.empty_caption, s.empty_caption_count) + list("저해상도", s.small, s.small_count);
+      if (s.preview.length) h += `<div class="thumbs">${s.preview.map(p => `<img loading="lazy" src="${imgUrl(p)}" data-zoom="${esc(p)}" alt="">`).join("")}</div>`;
+      h += `</div>`;
+    }
+  }
+  if (checking) h = `<div class="help" style="margin:8px 0">데이터셋 점검 중…</div>` + h;
+  box.innerHTML = h;
+  box.dataset.busy = "";
+  updateStepEstimate();
+}
+
+// ---------------------------------------------------------------- 학습 실행·상태
+async function start() {
+  if (!(await save(true))) return;  // 저장에 실패하면 예전 값으로 학습하지 않도록 시작하지 않는다
+  let r;
+  const body = { config_path: S.configPath, extra_args: S.extraArgs, resume: S.resume };
+  try { r = await api("/api/start", body); }
+  catch (e) {
+    if (e.data?.issues) {
+      if (!confirmBox(`설정 오류:\n- ${e.data.issues.join("\n- ")}\n\n그래도 시작할까요?`)) { switchTab("run"); runCheck(); return; }
+      try { r = await api("/api/start", { ...body, force: true }); }
+      catch (e2) { toast("시작 실패: " + e2.message, true); return; }
+    } else { toast("시작 실패: " + e.message, true); return; }
+  }
+  S.logSeq = 0; S.logLines = []; $("#log").textContent = "";
+  S.resume = ""; renderResume();  // 고른 지점은 한 번만 쓴다
+  toast(r.settings_dir ? `현재 설정을 저장하고 학습을 시작했습니다 — 사본: ${r.settings_dir.split(/[\\/]/).pop()}` : "현재 설정을 저장하고 학습을 시작했습니다 (설정 사본은 만들지 못했습니다)", !r.settings_dir);
+  switchTab("monitor"); poll();
+}
+// 모달 대화상자는 자동화 도구를 막을 수 있어 window.confirm 대신 인라인 확인을 쓴다
+let pendingConfirm = null;
+function confirmBox(msg) {
+  if (pendingConfirm && pendingConfirm.msg === msg && Date.now() - pendingConfirm.t < 8000) { pendingConfirm = null; return true; }
+  pendingConfirm = { msg, t: Date.now() };
+  toast(msg.split("\n\n")[0].replace(/\n/g, " ") + " — 강제로 시작하려면 8초 안에 '학습 시작'을 한 번 더 누르세요", true);
+  return false;
+}
+async function stop() {
+  const force = !!S.stopping;
+  if (!(pendingStop && Date.now() - pendingStop < 5000)) {
+    pendingStop = Date.now();
+    toast(force ? "저장을 기다리지 않고 끝내려면 5초 안에 한 번 더 누르세요 (이 지점으로 이어갈 수 없습니다)" : "중지하려면 5초 안에 '중지'를 한 번 더 누르세요 (현재 스텝까지 저장하고 멈춥니다)", true);
+    return;
+  }
+  pendingStop = 0;
+  try {
+    const r = await api("/api/stop", { force });
+    toast(r.stopped === "saving" ? "현재 스텝이 끝나면 저장하고 멈춥니다" : "중지했습니다");
+    poll();
+  } catch (e) { toast("중지 실패: " + e.message, true); }
+}
+let pendingStop = 0;
+
+function setStatus(st) {
+  const pill = $("#statusPill"), txt = $("#statusText");
+  pill.className = "pill";
+  S.stopping = !!st.stopping;
+  $("#btnStop").textContent = st.stopping ? "강제 중지" : "중지";
+  if (st.running) { pill.classList.add("run"); txt.textContent = st.stopping ? "중단 지점 저장 중…" : "학습 중"; }
+  else if (st.exit_code === null || st.exit_code === undefined) txt.textContent = "대기";
+  else if (st.exit_code === 0) { pill.classList.add("done"); txt.textContent = "완료"; }
+  else if (st.exit_code === "?") { pill.classList.add("done"); txt.textContent = "종료됨"; }  // UI 밖에서 끝나 종료 코드를 모름
+  else { pill.classList.add("fail"); txt.textContent = st.exit_code === "중지됨" ? "중지됨" : `오류 종료 (${st.exit_code})`; }
+  $("#btnStart").disabled = st.running; $("#btnStop").disabled = !st.running;
+  if ($("#btnStart2")) $("#btnStart2").disabled = st.running;
+  $("#topbar").classList.toggle("on", !!st.running);
+  $("#topbarFill").style.width = (st.progress?.total ? (100 * st.progress.step / st.progress.total) : 0) + "%";
+  const p = st.progress || {};
+  $("#pStep").innerHTML = p.total ? `${p.step}<small> / ${p.total}</small>` : "–";
+  $("#pEpoch").innerHTML = st.epoch ? `${st.epoch[0]}<small> / ${st.epoch[1]}</small>` : "–";
+  $("#pLoss").textContent = p.avr_loss != null ? p.avr_loss.toPrecision(4) : "–";
+  $("#pRate").textContent = p.rate || "–";
+  $("#pStepTime").innerHTML = p.step_time != null ? fmtStepTime(p.step_time) + (st.batch > 1 ? `<small> 이미지당 ${(p.step_time / st.batch).toFixed(2)}초</small>` : "") : "–";
+  $("#pElapsed").textContent = p.elapsed || "–";
+  const remain = st.running ? remainingSeconds(p) : null;
+  $("#pRemain").textContent = remain != null ? fmtClock(remain) : (st.running && p.eta ? p.eta : "–");
+  $("#pFinish").textContent = remain != null ? `완료 예상 ${fmtFinish(remain)}` : "";
+  if (st.running && !st.stopping && remain != null) txt.textContent = `학습 중 · 남은 ${fmtClock(remain)}`;
+  renderMeters(st.system);
+  $("#pBar").style.width = (p.total ? (100 * p.step / p.total) : 0) + "%";
+  renderEpochBar(st.epoch?.[1] || parseInt(S.cfg?.max_train_epochs) || 0, p.step, p.total);
+  $("#logPath").textContent = st.log_path || "";
+}
+// 진행 막대를 에포크로 나눈다. 칸이 좁으면 번호만 건너뛴다
+function renderEpochBar(epochs, step, total) {
+  const box = $("#pEpochs");
+  if (S.barEpochs !== epochs) {
+    S.barEpochs = epochs;
+    const every = Math.max(1, Math.round(niceStep(epochs / 30)));
+    $("#pTicks").innerHTML = epochs <= 100 ? Array.from({ length: Math.max(0, epochs - 1) }, (_, i) => `<span style="left:${(i + 1) / epochs * 100}%"></span>`).join("") : "";
+    box.innerHTML = Array.from({ length: epochs }, (_, i) => `<span>${i && (i + 1) % every ? "" : i + 1}</span>`).join("");
+  }
+  const now = total ? Math.min(epochs, Math.floor(step / total * epochs) + 1) : 0;
+  [...box.children].forEach((el, i) => { el.className = i + 1 === now ? "now" : i + 1 < now ? "done" : ""; });
+}
+// tqdm 의 남은 시간은 전체 평균이라 초반 튜닝 구간에 끌려 길게 나온다. 최근 스텝 시간으로 계산한다
+const remainingSeconds = p => (p.step_time != null && p.total ? (p.total - p.step) * p.step_time : null);
+function fmtClock(sec) {
+  const s = Math.round(sec), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+function fmtFinish(sec) {
+  const end = new Date(Date.now() + sec * 1000), now = new Date();
+  const days = Math.round((new Date(end.getFullYear(), end.getMonth(), end.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+  const time = `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`;
+  return days === 0 ? `오늘 ${time}` : days === 1 ? `내일 ${time}` : `${days}일 뒤 ${time}`;
+}
+const MEMORY_WARN = 0.9;  // 이 비율을 넘으면 메모리가 곧 찬다고 알린다
+const METER_LEVELS = [[0.95, "--bad"], [0.85, "--series-2"], [0.6, "--warn"], [0, "--good"]];  // 사용률 구간별 색, 높은 쪽부터
+function meterHtml(label, value, ratio, sub, warn) {
+  const level = value === "–" ? "" : `style="--level:var(${METER_LEVELS.find(([min]) => ratio >= min)[1]})"`;
+  return `<div class="meter" ${level}><div class="top"><span>${label}</span><b>${value}</b></div>`
+    + `<div class="track"><div class="fill" style="width:${Math.min(100, ratio * 100).toFixed(1)}%"></div></div>`
+    + `<div class="sub ${warn ? "warn" : ""}">${sub}</div></div>`;
+}
+function renderMeters(sys) {
+  const gpu = sys?.gpu, ram = sys?.ram, parts = [];
+  if (gpu) {
+    const info = [gpu.temp != null && `${Math.round(gpu.temp)}℃`, gpu.power != null && `${Math.round(gpu.power)}W`].filter(Boolean).join(" · ");
+    parts.push(meterHtml("GPU", gpu.util != null ? `${Math.round(gpu.util)}%` : "–", (gpu.util || 0) / 100, info, false));
+    const r = gpu.vram_used_gb / gpu.vram_total_gb, warn = r >= MEMORY_WARN;
+    parts.push(meterHtml("VRAM", `${gpu.vram_used_gb.toFixed(1)} / ${gpu.vram_total_gb.toFixed(1)} GB`, r, warn ? "⚠ 거의 찼습니다" : `${Math.round(r * 100)}%`, warn));
+  } else parts.push(meterHtml("GPU", "–", 0, "nvidia-smi 를 읽지 못했습니다", false));
+  if (ram) {
+    const r = ram.used_gb / ram.total_gb, warn = r >= MEMORY_WARN;
+    parts.push(meterHtml("RAM", `${ram.used_gb.toFixed(1)} / ${ram.total_gb.toFixed(1)} GB`, r, warn ? "⚠ 거의 찼습니다" : `${Math.round(r * 100)}%`, warn));
+  }
+  $("#meters").innerHTML = parts.join("");
+}
+const fmtStepTime = t => (t < 60 ? `${t.toFixed(2)}초` : `${Math.floor(t / 60)}분 ${Math.round(t % 60)}초`);
+function logClass(t) {
+  if (/^\[UI\]|^> /.test(t)) return "u";
+  if (/Traceback|Error|ERROR|error:|exit code: [1-9]/.test(t)) return "e";
+  if (/WARNING|WARN|warning/.test(t)) return "w";
+  return "";
+}
+function appendLog(lines) {
+  const pre = $("#log"), filt = $("#logFilter").value.trim().toLowerCase();
+  const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+  S.logLines.push(...lines);
+  if (S.logLines.length > 6000) { S.logLines = S.logLines.slice(-4000); return redrawLog(); }
+  const frag = document.createDocumentFragment();
+  for (const t of lines) {
+    if (filt && !t.toLowerCase().includes(filt)) continue;
+    const span = document.createElement("span"); span.className = logClass(t); span.textContent = t + "\n"; frag.appendChild(span);
+  }
+  pre.appendChild(frag);
+  if ($("#chkFollow").checked && atBottom) pre.scrollTop = pre.scrollHeight;
+}
+function redrawLog() { $("#log").textContent = ""; const l = S.logLines; S.logLines = []; appendLog(l); }
+
+let polling = false, lastRunning = false, tick = 0;
+async function poll() {
+  if (polling) return; polling = true;
+  try {
+    const st = await api("/api/status?since=" + S.logSeq);
+    if (st.reset) { S.logSeq = 0; S.logLines = []; $("#log").textContent = ""; polling = false; return poll(); }
+    if (st.lines.length) appendLog(st.lines);
+    S.logSeq = st.seq;
+    $("#log-partial").textContent = st.partial || "";
+    setStatus(st);
+    tick++;
+    if (st.running && tick % 5 === 0) { refreshScalars(); }
+    if (st.running && tick % 10 === 0) { refreshOutputs(); if (!S.runs.length || tick % 30 === 0) refreshRuns(); }
+    if (lastRunning && !st.running) {
+      refreshRuns(); refreshOutputs(); runCheck(); refreshResume();
+      if (st.exit_code === "중지됨") toast(st.saved_state ? "중단 지점을 저장했습니다 — 실행 탭의 '이어서 학습'에서 고르면 이어집니다" : "저장 없이 중지했습니다");
+    }
+    lastRunning = S.running = st.running;
+  } catch (e) { $("#statusText").textContent = "UI 서버 연결 끊김"; }
+  polling = false;
+}
+
+// ---------------------------------------------------------------- 그래프
+async function refreshRuns() {
+  if (!S.cfg.logging_dir) { S.runs = []; renderRunSelect(); drawChart(); return; }
+  try { S.runs = await api("/api/runs?logging_dir=" + encodeURIComponent(S.cfg.logging_dir)); } catch (e) { S.runs = []; }
+  if (!S.runs.find(r => r.path === S.run) || (S.running && S.runs[0] && S.run !== S.runs[0].path && !S.runPinned)) S.run = S.runs[0]?.path || "";
+  renderRunSelect(); refreshScalars();
+}
+function renderRunSelect() {
+  $("#runSelect").innerHTML = S.runs.length ? S.runs.map(r => `<option value="${esc(r.path)}" ${r.path === S.run ? "selected" : ""}>${esc(r.name)} · ${fmtTime(r.mtime)}</option>`).join("") : `<option>로그 없음</option>`;
+}
+async function refreshScalars() {
+  if (!S.run) { S.scalars = null; drawChart(); return; }
+  try { S.scalars = await api(`/api/scalars?logging_dir=${encodeURIComponent(S.cfg.logging_dir)}&run=${encodeURIComponent(S.run)}`); }
+  catch (e) { S.scalars = null; }
+  drawChart();
+}
+
+const chart = { pts: null, geom: null };
+function drawChart() {
+  const wrap = $("#chartWrap"), cv = $("#chart"), info = $("#chartInfo");
+  const W = wrap.clientWidth, H = wrap.clientHeight;
+  if (!W) return;
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  const css = getComputedStyle(document.documentElement), col = n => css.getPropertyValue(n).trim();
+  const sc = S.scalars;
+  const cur = sc?.["loss/current"] || [], avg = sc?.["loss/average"] || [], ep = sc?.["loss/epoch_average"] || [], lr = sc?.["lr/unet"] || [];
+  chart.pts = null;
+  if (!cur.length) {
+    ctx.fillStyle = col("--text-muted"); ctx.font = `13px ${col("--sans")}`; ctx.textAlign = "center";
+    ctx.fillText(S.runs.length ? "아직 기록된 loss 가 없습니다" : "TensorBoard 로그가 없습니다 (logging_dir)", W / 2, H / 2);
+    info.textContent = ""; return;
+  }
+  const logY = $("#chkLogY").checked;
+  // 에포크 평균은 x 가 에포크 번호로 기록되므로, 기록 시각 직전의 스텝 위치로 옮긴다
+  const stepAt = wt => { let s = cur[0][0]; for (const p of cur) { if (p[2] <= wt + 1e-3) s = p[0]; else break; } return s; };
+  const epPts = ep.map(([e, v, wt]) => [stepAt(wt), v, e]);
+  const live = S.running && S.runs[0] && S.run === S.runs[0].path;  // 지금 학습 중인 실행일 때만 현재 데이터셋 값을 쓴다
+  const stepsPerEpoch = (epPts.length ? Math.max(1, Math.round(epPts[0][0])) : 0) || (live && S.check?.dataset?.steps_per_epoch) || 1;
+  const all = cur.map(p => p[1]).concat(avg.map(p => p[1]), epPts.map(p => p[1])).filter(v => isFinite(v) && (!logY || v > 0));
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const tf = v => logY ? Math.log10(v) : v;
+  let tlo = tf(lo), thi = tf(hi); if (thi - tlo < 1e-12) { thi += 1e-3; tlo -= 1e-3; }
+  const padY = (thi - tlo) * 0.08; tlo -= padY; thi += padY; if (!logY && lo >= 0) tlo = Math.max(tlo, 0);
+  const xMax = Math.max(cur[cur.length - 1][0], (live && S.check?.dataset?.total_steps) || 0, 1), xMin = Math.min(cur[0][0], 1);
+  const m = { l: 62, r: 16, t: 14, b: 30 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const X = s => m.l + (s - xMin) / (xMax - xMin || 1) * pw, Y = v => m.t + (1 - (tf(v) - tlo) / (thi - tlo)) * ph;
+  // 눈금
+  ctx.font = `11px ${col("--sans")}`; ctx.fillStyle = col("--text-muted"); ctx.strokeStyle = col("--line"); ctx.lineWidth = 1;
+  const nT = 5;
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let i = 0; i <= nT; i++) {
+    const tv = tlo + (thi - tlo) * i / nT, v = logY ? 10 ** tv : tv, y = Math.round(Y(v)) + .5;
+    ctx.beginPath(); ctx.moveTo(m.l, y); ctx.lineTo(W - m.r, y); ctx.stroke();
+    ctx.fillText(fmtNum(v), m.l - 6, y);
+  }
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  const xStep = niceStep((xMax - xMin) / 6);
+  for (let s = Math.ceil(xMin / xStep) * xStep; s <= xMax; s += xStep) ctx.fillText(String(s), X(s), H - m.b + 8);
+  // 에포크 경계
+  if (stepsPerEpoch > 1 && xMax / stepsPerEpoch <= 60) {
+    ctx.strokeStyle = col("--text-muted"); ctx.setLineDash([3, 4]);
+    for (let e = stepsPerEpoch; e < xMax; e += stepsPerEpoch) { const x = Math.round(X(e)) + .5; ctx.beginPath(); ctx.moveTo(x, m.t); ctx.lineTo(x, m.t + ph); ctx.stroke(); }
+    ctx.setLineDash([]);
+    if (X(stepsPerEpoch) - X(0) >= 18) {  // 구간 가운데 위에 에포크 번호를 적는다
+      ctx.font = `10px ${col("--sans")}`; ctx.fillStyle = col("--text-muted"); ctx.textBaseline = "top";
+      for (let e = 0; e < xMax; e += stepsPerEpoch) ctx.fillText(String(e / stepsPerEpoch + 1), X(Math.min(e + stepsPerEpoch / 2, xMax)), 2);
+    }
+  }
+  const line = (pts, color, width, alpha) => {
+    ctx.save(); ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.beginPath();
+    let started = false;
+    for (const [s, v] of pts) { if (!isFinite(v) || (logY && v <= 0)) { started = false; continue; } const x = X(s), y = Y(v); started ? ctx.lineTo(x, y) : ctx.moveTo(x, y); started = true; }
+    ctx.stroke(); ctx.restore();
+  };
+  line(cur, col("--series-1"), 1, .35);
+  line(avg, col("--series-1"), 2, 1);
+  for (const [s, v] of epPts) {
+    if (logY && v <= 0) continue;
+    ctx.beginPath(); ctx.arc(X(s), Y(v), 4.5, 0, Math.PI * 2); ctx.fillStyle = col("--series-2"); ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = col("--surface-1"); ctx.stroke();
+  }
+  chart.pts = { cur, avg, epPts, lr, stepsPerEpoch };
+  chart.geom = { X, Y, m, pw, ph, xMin, xMax, W, H };
+  const last = avg[avg.length - 1] || cur[cur.length - 1];
+  const minAvg = avg.reduce((a, p) => p[1] < a[1] ? p : a, avg[0] || last);
+  info.textContent = `스텝 ${cur[cur.length - 1][0]} · 최근 이동 평균 ${fmtNum(last[1])} · 최저 이동 평균 ${fmtNum(minAvg[1])} (스텝 ${minAvg[0]})` + (lr.length ? ` · lr ${lr[lr.length - 1][1].toExponential(2)}` : "") + (live && S.check?.dataset?.total_steps ? ` · x축은 예상 총 ${S.check.dataset.total_steps} 스텝까지` : "");
+}
+function fmtNum(v) { const a = Math.abs(v); return a === 0 ? "0" : a < 1e-3 || a >= 1e4 ? v.toExponential(2) : v.toPrecision(3); }
+function niceStep(raw) { const p = 10 ** Math.floor(Math.log10(raw || 1)), n = raw / p; return (n < 1.5 ? 1 : n < 3.5 ? 2 : n < 7.5 ? 5 : 10) * p; }
+function nearest(arr, s) { let best = null; for (const p of arr) if (!best || Math.abs(p[0] - s) < Math.abs(best[0] - s)) best = p; return best; }
+function chartHover(e) {
+  const tip = $("#tip");
+  if (!chart.pts) { tip.style.display = "none"; return; }
+  const r = $("#chartWrap").getBoundingClientRect(), x = e.clientX - r.left, g = chart.geom;
+  if (x < g.m.l || x > g.W - g.m.r) { tip.style.display = "none"; drawChart(); return; }
+  const s = g.xMin + (x - g.m.l) / g.pw * (g.xMax - g.xMin);
+  const c = nearest(chart.pts.cur, s); if (!c) return;
+  const a = nearest(chart.pts.avg, c[0]), lr = nearest(chart.pts.lr, c[0]);
+  const epNo = Math.max(1, Math.ceil(c[0] / chart.pts.stepsPerEpoch)), ep = chart.pts.epPts.find(p => p[2] === epNo);
+  drawChart();
+  const ctx = $("#chart").getContext("2d"), cx = g.X(c[0]);
+  ctx.strokeStyle = "#8d8c83"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(Math.round(cx) + .5, g.m.t); ctx.lineTo(Math.round(cx) + .5, g.m.t + g.ph); ctx.stroke();
+  if (a) { ctx.beginPath(); ctx.arc(cx, g.Y(a[1]), 4, 0, Math.PI * 2); ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--series-1"); ctx.fill(); }
+  tip.innerHTML = `스텝 <b>${c[0]}</b> · 에포크 ${epNo}<br>loss <b>${fmtNum(c[1])}</b>` + (a ? `<br>이동 평균 <b>${fmtNum(a[1])}</b>` : "") + (ep ? `<br>에포크 평균 <b>${fmtNum(ep[1])}</b>` : "") + (lr ? `<br>lr ${lr[1].toExponential(2)}` : "");
+  tip.style.display = "block";
+  const tw = tip.offsetWidth;
+  tip.style.left = (cx + 14 + tw > g.W ? cx - tw - 14 : cx + 14) + "px"; tip.style.top = (g.m.t + 6) + "px";
+}
+
+// ---------------------------------------------------------------- 샘플·결과물
+const H = { list: true, open: new Set(), sig: "" };
+try { const v = JSON.parse(localStorage.getItem("moss_ui_history") || "{}"); H.list = v.list !== false; H.open = new Set(v.open || []); } catch (e) {}
+async function refreshOutputs() {
+  if (!S.cfg.output_dir) return;
+  try { S.outputs = await api("/api/outputs?output_dir=" + encodeURIComponent(S.cfg.output_dir)); } catch (e) { S.outputs = null; }
+  renderOutputs();
+}
+// 지금 설정의 output_name 은 위에 펼치고, 나머지는 이전 학습 목록으로 접는다. 접힌 항목의 파일은 펼칠 때 그린다.
+function groupBody(g) {
+  const shown = g.sample_count > g.samples.length ? `최신 ${g.samples.length}장만 표시` : "최신순";
+  let h = g.models.length ? `<table class="models" style="margin-top:6px"><tr><th>파일</th><th>크기</th><th>저장 시각</th></tr>${g.models.map(f => `<tr><td>${esc(f.name)}</td><td>${fmtSize(f.size)}</td><td>${fmtTime(f.mtime)}</td></tr>`).join("")}</table>` : `<div class="empty" style="padding:14px">아직 저장된 LoRA 가 없습니다</div>`;
+  h += `<h3>샘플 이미지 <span style="font-weight:400;color:var(--text-muted)">(${g.sample_count}장, ${shown})</span></h3>`;
+  h += g.samples.length ? `<div class="gallery">${g.samples.map(f => `<figure data-zoom="${esc(f.path)}"><img loading="lazy" src="${imgUrl(f.path)}&t=${f.mtime}" alt=""><figcaption title="${esc(f.name)}">${esc(f.name)}</figcaption></figure>`).join("")}</div>` : `<div class="empty">샘플이 없습니다 — 샘플 프롬프트 파일과 sample_every_n_epochs 를 지정하면 에포크마다 생성됩니다</div>`;
+  return h;
+}
+function renderOutputs() {
+  const o = S.outputs, pane = $("#pane-results");
+  const name = S.cfg.output_name || o?.groups?.[0]?.name || "";
+  const sig = JSON.stringify([name, o]);
+  if (sig === H.sig) return;  // 주기적 갱신이 스크롤과 불러온 그림을 건드리지 않게
+  H.sig = sig;
+  if (!o?.groups) { $("#sampleCount").textContent = 0; pane.innerHTML = `<div class="empty">출력 폴더를 읽지 못했습니다</div>`; return; }
+  const cur = o.groups.find(g => g.name === name) || { name, models: [], samples: [], sample_count: 0 };
+  const past = o.groups.filter(g => g !== cur);
+  $("#sampleCount").textContent = cur.sample_count;
+  let h = `<div style="display:flex;align-items:center;gap:8px"><b>${esc(name || "이름 없음")}</b><span style="flex:1"></span><button class="btn small" data-opendir="${esc(S.cfg.output_dir)}">출력 폴더 열기</button></div>`;
+  h += groupBody(cur);
+  if (past.length) {
+    h += `<details class="card hist" id="histList" ${H.list ? "open" : ""}><summary>이전 학습<span class="sub">${past.length}개</span></summary><div class="hist-body">`;
+    h += past.map(g => `<details class="card" data-hist="${esc(g.name)}" ${H.open.has(g.name) ? "open" : ""}><summary>${esc(g.name || "이름 없음")}<span class="sub">LoRA ${g.models.length} · ${fmtSize(g.size)} · 샘플 ${g.sample_count} · ${fmtTime(g.mtime)}</span></summary><div class="hist-body">${H.open.has(g.name) ? groupBody(g) : ""}</div></details>`).join("");
+    h += `</div></details>`;
+  }
+  pane.innerHTML = h;
+}
+$("#pane-results").addEventListener("toggle", e => {
+  const d = e.target, body = d.querySelector(":scope > .hist-body");
+  if (d.id === "histList") H.list = d.open;
+  else if (d.dataset.hist == null) return;
+  else if (d.open) {
+    H.open.add(d.dataset.hist);
+    if (!body.children.length) body.innerHTML = groupBody(S.outputs.groups.find(g => g.name === d.dataset.hist));
+  } else H.open.delete(d.dataset.hist);
+  try { localStorage.setItem("moss_ui_history", JSON.stringify({ list: H.list, open: [...H.open] })); } catch (err) {}
+}, true);
+
+// ---------------------------------------------------------------- 명령
+async function updateCmd() {
+  try {
+    const r = await api(`/api/command?config=${encodeURIComponent(S.configPath)}&extra=${encodeURIComponent(S.extraArgs)}&resume=${encodeURIComponent(S.resume || "")}`);
+    $("#pane-cmd").innerHTML = `<b>UI 가 실행하는 명령</b><div class="help" style="margin:2px 0 8px">작업 폴더: sd-scripts. 같은 설정은 <code>train_moss.bat "${esc(S.configPath.replace(/\//g, "\\"))}"</code> 로도 실행할 수 있습니다.</div><pre class="cmd" id="cmdText">${esc(r.command)}</pre><button class="btn small" id="btnCopyCmd">복사</button>`;
+  } catch (e) {}
+}
+
+// ---------------------------------------------------------------- 학습 폴더 선택
+// 기준 폴더 아래 <주제>/.../training/<세트>/<반복_이름> 구조를 찾아 고른다. 반복 수는 폴더 이름 앞 숫자.
+const P = { root: "", sets: null, tab: "found", sel: null, info: null, dir: null, loading: false };
+try { P.root = localStorage.getItem("moss_ui_root") || ""; } catch (e) {}
+const capExt = () => (S.ds?.general?.caption_extension || ".txt").trim() || ".txt";
+const relTo = (p, root) => p.toLowerCase().startsWith(root.toLowerCase() + "/") ? p.slice(root.length + 1) : p;
+
+// 데이터셋 탭 왼쪽에 늘 떠 있는 선택기 — 처음 한 번만 폴더를 찾는다
+function initPicker() {
+  if (document.activeElement?.id !== "pkRoot") $("#pkRoot").value = P.root;
+  if (!P.sets && !P.loading) loadSets(false); else renderPicker();
+}
+async function loadSets(force) {
+  P.loading = true; renderPicker();
+  try {
+    const r = await api(`/api/training_sets?root=${encodeURIComponent(P.root)}&ext=${encodeURIComponent(capExt())}${force ? "&force=1" : ""}`);
+    P.root = r.root; P.sets = r.sets; $("#pkRoot").value = P.root;
+    try { localStorage.setItem("moss_ui_root", P.root); } catch (e) {}
+  } catch (e) { P.sets = []; toast(e.message, true); }
+  P.loading = false;
+  if (!P.dir) await browseTo(P.root, true);
+  renderPicker();
+}
+async function browseTo(path, quiet) {
+  try { P.dir = await api(`/api/dir?path=${encodeURIComponent(path)}&ext=${encodeURIComponent(capExt())}`); }
+  catch (e) { if (!quiet) toast(e.message, true); return; }
+  if (!quiet) renderPicker();
+}
+async function selectFolder(path) {
+  P.sel = path; P.info = null; renderPicker();
+  const multiline = S.ds?.general?.enable_multiline_caption ? 1 : 0, minReso = parseInt(S.ds?.dataset?.min_bucket_reso) || 256;
+  try { P.info = await api(`/api/dir?path=${encodeURIComponent(path)}&ext=${encodeURIComponent(capExt())}&detail=1&multiline=${multiline}&min_reso=${minReso}`); } catch (e) { toast(e.message, true); }
+  if (P.sel === path) renderDetail();
+}
+const badgeHtml = f => {
+  const capBad = f.captions < f.images;
+  return `<span class="badge ${f.images ? "note" : ""}">이미지 ${f.images}</span>`
+    + (f.images ? `<span class="badge ${capBad ? "bad" : "ok"}">캡션 ${f.captions}</span>` : "")
+    + (f.repeats != null ? `<span class="badge">반복 ${f.repeats}</span>` : "");
+};
+function renderPicker() {
+  document.querySelectorAll("[data-pktab]").forEach(t => t.classList.toggle("on", t.dataset.pktab === P.tab));
+  const body = $("#pkBody"), filt = $("#pkFilter").value.trim().toLowerCase();
+  if (P.tab === "found") {
+    if (P.loading || !P.sets) { body.innerHTML = `<div class="empty">training 폴더를 찾는 중… (처음 한 번은 몇 초 걸립니다)</div>`; renderDetail(); return; }
+    const rows = P.sets.filter(s => !filt || s.rel.toLowerCase().includes(filt));
+    if (!rows.length) { body.innerHTML = `<div class="empty">${P.sets.length ? "검색 결과가 없습니다" : "이 폴더 아래에 training 폴더가 없습니다 — '폴더 탐색' 탭에서 직접 고르세요"}</div>`; renderDetail(); return; }
+    const groups = new Map();
+    for (const s of rows) { if (!groups.has(s.group)) groups.set(s.group, []); groups.get(s.group).push(s); }
+    let h = "", lastTopic = "";
+    for (const [g, list] of groups) {
+      const topic = list[0].topic, usable = list.filter(s => s.repeats != null);
+      if (topic !== lastTopic) { h += `<div class="pk-ghead"><span class="topic">${esc(topic)}</span></div>`; lastTopic = topic; }
+      h += `<div class="pk-group"><div class="pk-ghead">${esc(g)}<span style="flex:1"></span>`
+        + (usable.length > 1 ? `<button class="btn small" data-pkset="${esc(g)}" title="반복_이름 형식 폴더 ${usable.length}개를 모두 이미지 폴더로">세트 전체 사용 (${usable.length}개)</button>` : "") + `</div>`;
+      for (const s of list) h += `<div class="pk-row ${P.sel === s.path ? "sel" : ""} ${s.repeats == null ? "dim" : ""}" data-pkpath="${esc(s.path)}" title="${esc(s.path)}"><span class="nm">${esc(s.name)}</span>${badgeHtml(s)}</div>`;
+      h += `</div>`;
+    }
+    body.innerHTML = h;
+  } else {
+    const d = P.dir;
+    if (!d) { body.innerHTML = `<div class="empty">불러오는 중…</div>`; renderDetail(); return; }
+    const parts = relTo(d.path, P.root) === d.path ? null : relTo(d.path, P.root).split("/");
+    let crumbs = `<button data-pknav="${esc(P.root)}">${esc(P.root)}</button>`;
+    if (parts) parts.reduce((acc, p) => { const full = acc + "/" + p; crumbs += `/<button data-pknav="${esc(full)}">${esc(p)}</button>`; return full; }, P.root);
+    else crumbs = `<button data-pknav="${esc(d.path)}">${esc(d.path)}</button>`;
+    let h = `<div class="pk-crumbs">${d.parent ? `<button data-pknav="${esc(d.parent)}" title="위로">↑ 위로</button> ` : ""}${crumbs}</div>`;
+    if (d.images) h += `<div class="pk-row ${P.sel === d.path ? "sel" : ""}" data-pkpath="${esc(d.path)}"><span class="nm">(이 폴더)</span>${badgeHtml(d)}</div>`;
+    const ents = d.entries.filter(e => !filt || e.name.toLowerCase().includes(filt));
+    h += ents.map(e => `<div class="pk-row ${P.sel === e.path ? "sel" : ""}" data-pknav="${esc(e.path)}" data-pkpick="${e.images ? esc(e.path) : ""}" title="${esc(e.path)}">
+      <span class="nm ${e.subdirs ? "dir" : ""}" ${e.is_training ? 'style="color:#cfe2fb;font-weight:700"' : ""}>${esc(e.name)}</span>${e.images ? badgeHtml(e) : e.subdirs ? `<span class="badge">하위 ${e.subdirs}</span>` : ""}</div>`).join("")
+      || `<div class="empty">하위 폴더가 없습니다</div>`;
+    body.innerHTML = h;
+  }
+  renderDetail();
+}
+// 하위 폴더 일괄 등록은 폴더마다 학습 폴더 한 칸씩 만든다. sd-scripts 에 하위 폴더를 훑는 옵션이 없고, 이래야 폴더별 반복 수도 유지된다
+const MAX_BULK_FOLDERS = 20;
+const VERDICT_LABEL = { ok: "학습 적합", warn: "주의 필요", bad: "학습 부적합", skip: "학습 제외", none: "이미지 없음" };
+function childSets(info) { return (info?.subfolders || []).filter(s => s.usable); }
+function subfoldersHtml(i, kids) {
+  const subs = i.subfolders, sum = list => list.reduce((a, s) => a + s.images, 0);
+  const skipped = subs.filter(s => !s.usable);
+  const caps = kids.reduce((a, s) => a + s.captions, 0);
+  const head = `하위 폴더 ${subs.length}개${i.subfolders_truncated ? "+" : ""} — 학습 가능 ${kids.length}개 (이미지 ${sum(kids)}장, 캡션 ${caps}장)`
+    + (skipped.length ? `, 제외 ${skipped.length}개 (${sum(skipped)}장)` : "");
+  const rows = subs.map(s => `<div class="pk-row ${s.usable ? "" : "dim"}" data-pkpath="${esc(s.path)}" title="${esc(s.verdict.notes.join(" / "))}"><span class="nm">${esc(s.name)}</span>${badgeHtml(s)}<span class="badge ${s.verdict.level}">${VERDICT_LABEL[s.verdict.level]}</span></div>`).join("");
+  return `<div class="pk-subs"><div class="sum">${esc(head)}</div><div class="list">${rows}</div></div>`;
+}
+function renderDetail() {
+  const el = $("#pkDetail"), i = P.info;
+  if (!P.sel) {
+    const cur = (S.ds?.subsets || []).map(s => s.image_dir).filter(Boolean);
+    el.innerHTML = `<div style="color:var(--text-muted);font-size:12px">폴더를 누르면 미리보기와 적용 버튼이 나옵니다. 폴더 이름이 <code>6_이름</code> 이면 반복 수 6 으로 채웁니다.</div>`
+      + (cur.length ? `<div style="margin-top:6px;font-size:12px">현재 이미지 폴더: ${cur.map(p => `<div class="path">${esc(p)}</div>`).join("")}</div>` : "");
+    return;
+  }
+  if (!i) { el.innerHTML = `<div class="path">${esc(P.sel)}</div><div style="color:var(--text-muted)">읽는 중…</div>`; return; }
+  const kids = childSets(i), v = i.verdict;
+  const tooBroad = i.subfolders_truncated || kids.length > MAX_BULK_FOLDERS;
+  el.innerHTML = `<div class="path">${esc(i.path)}</div>
+    ${i.images ? `<div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap">${badgeHtml(i)}</div>
+    <div class="verdict ${v.level}"><b>${VERDICT_LABEL[v.level]}</b>${v.notes.map(n => `<div>${esc(n)}</div>`).join("")}</div>` : ""}
+    ${i.preview.length ? `<div class="thumbs">${i.preview.map(p => `<img loading="lazy" src="${imgUrl(p)}" data-zoom="${esc(p)}" alt="">`).join("")}</div>` : ""}
+    ${i.subfolders.length ? subfoldersHtml(i, kids) : ""}
+    <div class="acts">
+      ${i.images ? `<button class="btn primary small" data-pkapply="replace">이 폴더를 학습폴더로 설정</button><button class="btn small" data-pkapply="add">이 폴더를 학습폴더에 추가</button>` : ""}
+      ${kids.length && !tooBroad ? `<button class="btn ${i.images ? "" : "primary"} small" data-pkapply="kids-replace">이 폴더의 하위폴더를 학습폴더로 설정</button><button class="btn small" data-pkapply="kids-add">이 폴더의 하위폴더를 학습폴더에 추가</button>` : ""}
+      ${kids.length && tooBroad ? `<span style="color:var(--text-muted);font-size:12px">하위 폴더가 너무 많아 한 번에 등록하지 않습니다 — 더 아래 폴더를 고르세요</span>` : ""}
+      ${!i.images && !kids.length ? `<span style="color:var(--text-muted);font-size:12px">이 폴더에는 바로 쓸 이미지가 없습니다</span>` : ""}
+    </div>`;
+}
+async function applyFolders(folders, mode) {
+  if (!folders.length) return;
+  if (!S.ds) { toast("dataset.toml 을 먼저 읽어야 합니다", true); return; }
+  const subs = S.ds.subsets;
+  const entry = f => ({ image_dir: f.path, num_repeats: String(f.repeats ?? 1) });
+  if (mode === "add") {
+    const have = new Set(subs.map(s => (s.image_dir || "").replace(/\\/g, "/").toLowerCase()));
+    const fresh = folders.filter(f => !have.has(f.path.toLowerCase()));
+    if (!fresh.length) { toast("이미 들어 있는 폴더입니다"); return; }
+    // 빈 기본 칸(경로가 없거나 없는 폴더)은 덮어쓴다
+    if (subs.length === 1 && S.check?.dataset?.subsets?.[0] && !S.check.dataset.subsets[0].ok) {
+      Object.assign(subs[0], { image_dir: fresh[0].path, num_repeats: String(fresh[0].repeats ?? 1) }); fresh.shift();
+    }
+    fresh.forEach(f => subs.push(entry(f)));
+  } else {
+    folders.forEach((f, k) => { if (k < subs.length) Object.assign(subs[k], { image_dir: f.path, num_repeats: String(f.repeats ?? 1) }); else subs.push(entry(f)); });
+    // 남는 기존 칸은 뒤에서부터 지운다(원본 인덱스와 화면 인덱스가 같도록)
+    for (let k = subs.length - 1; k >= folders.length; k--) {
+      if (k < S.dsOrig.subsets.length) { S.removedSubsets.push(k); S.dsOrig.subsets.splice(k, 1); }
+      subs.splice(k, 1);
+    }
+  }
+  renderLeft();
+  if (await save(true)) { P.sel = null; P.info = null; renderPicker(); toast(`이미지 폴더 ${S.ds.subsets.length}개로 저장했습니다 — 오른쪽에서 점검 결과를 확인하세요`); }
+}
+function pickerClick(e) {
+  const t = e.target.closest("[data-pktab],[data-pkset],[data-pkpath],[data-pknav],[data-pkapply],button");
+  if (!t) return;
+  if (t.dataset.pktab) { P.tab = t.dataset.pktab; renderPicker(); return; }
+  if (t.dataset.pkset !== undefined) {
+    const list = P.sets.filter(s => s.group === t.dataset.pkset && s.repeats != null);
+    applyFolders(list.map(s => ({ path: s.path, repeats: s.repeats })), "replace"); return;
+  }
+  if (t.dataset.pkapply) {
+    const i = P.info, kids = childSets(i).map(k => ({ path: k.path, repeats: k.repeats }));
+    const self = [{ path: i.path, repeats: i.repeats }];
+    applyFolders(t.dataset.pkapply.startsWith("kids") ? kids : self, t.dataset.pkapply.endsWith("add") ? "add" : "replace"); return;
+  }
+  if (t.dataset.pknav !== undefined && P.tab === "browse") {
+    // 이미지가 든 폴더는 한 번 누르면 선택, 선택된 상태에서 다시 누르거나 하위 폴더만 있으면 들어간다
+    const pick = t.dataset.pkpick;
+    if (pick && P.sel !== pick) { selectFolder(pick); return; }
+    P.sel = null; P.info = null; browseTo(t.dataset.pknav).then(() => { if (P.dir) selectFolder(P.dir.path); });
+    return;
+  }
+  if (t.dataset.pkpath) selectFolder(t.dataset.pkpath);
+}
+
+// ---------------------------------------------------------------- 이벤트
+function switchTab(name) {
+  if (!TAB_ORDER.includes(name)) name = "dataset";
+  document.querySelectorAll("#tabs .tab").forEach(t => t.classList.toggle("on", t.dataset.pane === name));
+  document.querySelectorAll("#main > .pane").forEach(p => p.classList.toggle("on", p.id === "pane-" + name));
+  $("#main").scrollTop = 0;
+  try { localStorage.setItem("moss_ui_tab", name); } catch (e) {}
+  if (name === "monitor") { requestAnimationFrame(drawChart); const pre = $("#log"); pre.scrollTop = pre.scrollHeight; }
+  if (name === "output") ensureGallery();
+  if (name === "preview") ensurePreview();
+}
+$("#tabs").addEventListener("click", e => { const t = e.target.closest(".tab"); if (t) switchTab(t.dataset.pane); });
+$("#main").addEventListener("input", onInput);
+$("#main").addEventListener("change", onInput);
+$("#main").addEventListener("pointerdown", e => { const c = e.target.closest("[data-pcard]"); if (c) setActivePrompt(+c.dataset.pcard); });
+$("#main").addEventListener("focusin", e => { const c = e.target.closest("[data-pcard]"); if (c) setActivePrompt(+c.dataset.pcard); });
+// 숫자 조절 위젯: 화살표(누르고 있으면 반복)·휠·위아래 방향키
+let spinTimer = null, lastScroll = 0;
+$("#main").addEventListener("pointerdown", e => {
+  const b = e.target.closest("[data-spinfor]");
+  if (!b) return;
+  e.preventDefault();
+  const tick = delay => { spinValue(b.dataset.spinfor, +b.dataset.dir); spinTimer = setTimeout(() => tick(70), delay); };
+  tick(400);
+});
+for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, () => clearTimeout(spinTimer));
+$("#main").addEventListener("scroll", () => { lastScroll = performance.now(); }, true);
+$("#main").addEventListener("wheel", e => {
+  const box = e.target.closest(".spin");
+  if (!box || performance.now() - lastScroll < 200) return;  // 화면을 굴리다 커서가 지나간 경우는 값을 바꾸지 않는다
+  e.preventDefault();
+  spinValue(box.querySelector("input").id, e.deltaY < 0 ? 1 : -1);
+}, { passive: false });
+$("#main").addEventListener("keydown", e => {
+  if ((e.key !== "ArrowUp" && e.key !== "ArrowDown") || !e.target.closest(".spin")) return;
+  e.preventDefault();
+  spinValue(e.target.id, e.key === "ArrowUp" ? 1 : -1);
+});
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button, [data-zoom]");
+  if (!b) return;
+  if (b.closest("#picker")) return;  // 폴더 선택기는 pickerClick 이 처리
+  if (b.dataset.goto) { switchTab(b.dataset.goto); return; }
+  if (b.id === "btnStart2") { start(); return; }
+  if (b.dataset.browse) {
+    const el = $("#" + b.dataset.browse);
+    b.disabled = true;
+    // 이미지 폴더는 값이 비었거나 없는 경로여도 기준 폴더에서 연다
+    const initial = /_image_dir$/.test(b.dataset.browse) && !el.value.trim() ? P.root : (el.value || (/_image_dir$/.test(b.dataset.browse) ? P.root : ""));
+    try { const r = await api("/api/browse", { kind: b.dataset.kind, initial });if (r.path) { el.value = r.path.replace(/\//g, "/"); el.dispatchEvent(new Event("input", { bubbles: true })); } }
+    catch (err) { toast(err.message, true); }
+    b.disabled = false;
+  } else if (b.dataset.vimg !== undefined) selectPreview(previewImages()[+b.dataset.vimg]);
+  else if (b.dataset.vmore) { V.shown += GALLERY_PAGE; renderPreviewGrid(); }
+  else if (b.dataset.vopen) openViewer(b.dataset.vopen);
+  else if (b.dataset.gimg !== undefined) pickGalleryImage(galleryImages()[+b.dataset.gimg]);
+  else if (b.dataset.gmore) { G.shown += GALLERY_PAGE; renderGalleryGrid(); }
+  else if (b.dataset.gcand !== undefined) { G.cand = +b.dataset.gcand; putCaption(G.sel.captions[G.cand]); renderGallerySel(); }
+  else if (b.id === "btnAddPrompt") addPrompt();
+  else if (b.id === "btnOutPaths") {
+    S.outPaths = $("#outPaths").hidden;
+    $("#outPaths").hidden = !S.outPaths; $("#outSummary").hidden = S.outPaths;
+    b.textContent = `경로 설정 ${S.outPaths ? "▴" : "▾"}`;
+  } else if (b.id === "btnRawPrompts") {
+    if (S.pRaw) parsePrompts(S.prompts);
+    S.pRaw = !S.pRaw;
+    renderPrompts();
+  } else if (b.dataset.pdup !== undefined) {
+    const i = +b.dataset.pdup, it = S.pitems[i];
+    S.pitems.splice(i + 1, 0, { ...it, extra: [...it.extra] });
+    S.pActive = i + 1; renderPrompts(); promptChanged();
+  } else if (b.dataset.pdel !== undefined) {
+    S.pitems.splice(+b.dataset.pdel, 1);
+    if (S.pitems[S.pActive]?.prompt === undefined) S.pActive = S.pitems.findIndex(it => it.raw === undefined);
+    renderPrompts(); promptChanged();
+  } else if (b.dataset.psize !== undefined) {
+    setInput($(`#p${b.dataset.psize}_w`), b.dataset.w);
+    setInput($(`#p${b.dataset.psize}_h`), b.dataset.h);
+  } else if (b.dataset.lrpoint !== undefined) setInput($("#c_learning_rate"), Number(`1e${b.dataset.lrpoint}`));
+  else if (b.dataset.rankpreset !== undefined) applyPreset(RANK_PRESETS[+b.dataset.rankpreset].v);
+  else if (b.dataset.tspreset !== undefined) applyPreset(TS_PRESETS[+b.dataset.tspreset].v);
+  else if (b.dataset.vram !== undefined) { applyPreset(VRAM_PRESETS[+b.dataset.vram].v); $("#vramNote").textContent = VRAM_PRESETS[+b.dataset.vram].note; }
+  else if (b.dataset.rmsub !== undefined) {
+    const i = +b.dataset.rmsub;
+    if (i < S.dsOrig.subsets.length) { S.removedSubsets.push(i); S.dsOrig.subsets.splice(i, 1); }
+    S.ds.subsets.splice(i, 1);
+    // 남은 원본 인덱스가 바뀌므로 먼저 삭제만 저장한다
+    renderLeft(); await save(true);
+  } else if (b.dataset.opendir !== undefined) { try { await api("/api/open", { path: b.dataset.opendir }); } catch (err) { toast(err.message, true); } }
+  else if (b.dataset.zoom) { const lb = $("#lightbox"); lb.querySelector("img").src = imgUrl(b.dataset.zoom); lb.querySelector("div").textContent = b.dataset.zoom; lb.style.display = "flex"; }
+  else if (b.id === "btnCheck") runCheck();
+  else if (b.id === "btnCopyCmd") { navigator.clipboard.writeText($("#cmdText").textContent).then(() => toast("복사했습니다")); }
+});
+$("#lightbox").addEventListener("click", () => $("#lightbox").style.display = "none");
+$("#picker").addEventListener("click", e => {
+  if (e.target.closest("[data-zoom]")) { const p = e.target.closest("[data-zoom]").dataset.zoom; const lb = $("#lightbox"); lb.querySelector("img").src = imgUrl(p); lb.querySelector("div").textContent = p; lb.style.display = "flex"; return; }
+  if (e.target.id === "pkRefresh") { loadSets(true); return; }
+  if (e.target.id === "pkRootApply") { P.root = $("#pkRoot").value.trim().replace(/\\/g, "/").replace(/\/$/, ""); P.sets = null; P.dir = null; P.sel = null; loadSets(false); return; }
+  pickerClick(e);
+});
+$("#pkRoot").addEventListener("keydown", e => { if (e.key === "Enter") $("#pkRootApply").click(); });
+$("#pkFilter").addEventListener("input", renderPicker);
+$("#btnSave").addEventListener("click", () => save());
+$("#btnSaveAs").addEventListener("click", () => showSaveAs(true));
+$("#saveAsOk").addEventListener("click", saveAs);
+$("#saveAsCancel").addEventListener("click", () => showSaveAs(false));
+$("#saveAsName").addEventListener("keydown", e => { if (e.key === "Enter") saveAs(); if (e.key === "Escape") showSaveAs(false); });
+$("#btnReload").addEventListener("click", () => { if (hasChanges() && !(pendingReload && Date.now() - pendingReload < 5000)) { pendingReload = Date.now(); toast("저장 안 된 변경이 있습니다 — 버리려면 5초 안에 한 번 더 누르세요", true); return; } pendingReload = 0; load(S.configPath); });
+let pendingReload = 0;
+$("#btnStart").addEventListener("click", start);
+$("#btnStop").addEventListener("click", stop);
+$("#cfgSelect").addEventListener("change", e => { if (hasChanges()) { toast("먼저 저장하거나 다시 읽기로 변경을 버리세요", true); e.target.value = S.configPath; return; } load(e.target.value); });
+$("#runSelect").addEventListener("change", e => { S.run = e.target.value; S.runPinned = true; refreshScalars(); });
+$("#chkLogY").addEventListener("change", drawChart);
+$("#logFilter").addEventListener("input", redrawLog);
+$("#chartWrap").addEventListener("mousemove", chartHover);
+$("#chartWrap").addEventListener("mouseleave", () => { $("#tip").style.display = "none"; drawChart(); });
+new ResizeObserver(() => { if ($("#pane-monitor").classList.contains("on")) drawChart(); }).observe($("#chartWrap"));
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); }
+  // Ctrl+숫자는 브라우저가 가져가므로 Alt+1~8 로 탭 이동
+  if (e.altKey && !e.ctrlKey && /^[1-8]$/.test(e.key)) { e.preventDefault(); switchTab(TAB_ORDER[+e.key - 1]); }
+  if (e.key === "Escape") $("#lightbox").style.display = "none";
+});
+// 전체 화면 보기가 열려 있으면 키보드는 모두 보기가 가져간다
+document.addEventListener("keydown", e => {
+  if (!VW.open || e.key === "F11" || e.key === "F12") return;
+  e.preventDefault(); e.stopPropagation();
+  if (e.key === "Escape") closeViewer();
+  else if (PAN_KEYS[e.code]) { VW.keys.add(e.code); vwDraw(); }
+}, true);
+document.addEventListener("keyup", e => { VW.keys.delete(e.code); }, true);
+window.addEventListener("blur", () => VW.keys.clear());
+document.addEventListener("fullscreenchange", () => { if (!document.fullscreenElement) closeViewer(); });  // 전체 화면의 Esc 는 브라우저가 먼저 처리한다
+$("#viewer").addEventListener("wheel", vwWheel, { passive: false });
+$("#viewer").addEventListener("contextmenu", e => { e.preventDefault(); closeViewer(); });
+for (const ev of ["pointerdown", "pointermove", "pointerup", "pointercancel"]) $("#viewer").addEventListener(ev, vwPointer);
+window.addEventListener("beforeunload", e => { if (hasChanges()) { e.preventDefault(); e.returnValue = ""; } });
+
+document.querySelectorAll("#tabs .tab").forEach(t => { const n = TAB_ORDER.indexOf(t.dataset.pane) + 1; t.title = `Alt+${n}`; t.querySelector(".key").textContent = `Alt+${n}`; });
+try { switchTab(localStorage.getItem("moss_ui_tab") || "dataset"); } catch (e) { switchTab("dataset"); }
+let lastConfig = "";
+try { lastConfig = localStorage.getItem("moss_ui_config") || ""; } catch (e) {}
+load(lastConfig).catch(e => toast("불러오기 실패: " + e.message, true));
+poll();
+setInterval(poll, 1000);
+setInterval(() => { if (!S.running) { refreshOutputs(); } }, 30000);
+</script>
+</body>
+</html>

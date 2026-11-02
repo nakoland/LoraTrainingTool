@@ -1,0 +1,4 @@
+* text=auto
+# ZIP 으로 받아도 CRLF 가 유지되도록 그대로 저장한다. LF 인 .bat 은 goto 가 깨질 수 있다
+*.bat -text
+*.ps1 -text

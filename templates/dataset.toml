@@ -1,0 +1,24 @@
+# MOSS-Image 데이터셋 설정. 이미지 폴더는 UI 의 데이터셋 탭에서 고른다.
+# 캡션은 이미지와 같은 이름의 .txt 이고, 캐시(*_moss.npz, *_moss_te.npz)는 이미지 폴더 안에 생긴다.
+#
+# 한 이미지에 캡션 후보를 여러 개 두려면 .txt 안에서 ---===--- 줄로 구분한다
+# (스텝마다 하나를 무작위로 고른다). 예)
+#   A person with long black hair standing in a classroom, ...
+#   ---===---
+#   1person, long hair, black hair, classroom, standing
+
+[general]
+enable_multiline_caption = true
+caption_extension = ".txt"
+
+[[datasets]]
+resolution = 1024
+batch_size = 2
+enable_bucket = true
+bucket_no_upscale = true
+min_bucket_reso = 512
+max_bucket_reso = 2048
+
+  [[datasets.subsets]]
+  image_dir = ""
+  num_repeats = 1

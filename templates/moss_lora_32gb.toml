@@ -1,0 +1,57 @@
+# MOSS-Image LoRA 학습 설정. UI 에서 고치면 이 파일에 저장된다.
+# 콘솔 실행: train_moss.bat moss_lora_32gb.toml
+# 명령줄에 같은 인자를 주면 이 파일 값보다 우선한다. 예) --max_train_epochs=20
+
+[model]
+# 모델 파일 경로는 UI 의 학습 설정 탭에서 지정한다 (README 의 모델 준비 참고)
+pretrained_model_name_or_path = ""
+text_encoder = ""
+vae = ""
+
+[dataset]
+# 학습할 이미지 폴더는 이 데이터셋 설정 파일에서 지정한다
+dataset_config = "{{TOOL}}/dataset.toml"
+max_data_loader_n_workers = 2
+persistent_data_loader_workers = true
+
+[output]
+output_dir = "{{TOOL}}/output"
+output_name = "my_lora"
+logging_dir = "{{TOOL}}/logs"
+save_model_as = "safetensors"
+save_every_n_epochs = 1
+# 샘플 이미지: 에포크마다 prompts.txt 의 프롬프트로 생성 (끄려면 이 두 줄을 지운다)
+sample_prompts = "{{TOOL}}/prompts.txt"
+sample_every_n_epochs = 1
+
+[network]
+network_module = "networks.lora_generic"
+network_dim = 32
+network_alpha = 16
+# DiT 만 학습 (텍스트 인코더는 고정)
+network_train_unet_only = true
+
+[optimizer]
+optimizer_type = "AdamW"
+learning_rate = 1e-4
+lr_scheduler = "cosine"
+max_train_epochs = 10
+seed = 42
+
+[timestep]
+# MOSS-Image 기술 보고서의 사전학습 마지막 구간 분포
+timestep_sampling = "truncated_logit_normal"
+logit_mean = -1.09
+logit_std = 0.95
+discrete_flow_shift = 1.0
+
+[memory]
+mixed_precision = "bf16"
+gradient_checkpointing = true
+cache_latents = true
+cache_latents_to_disk = true
+cache_text_encoder_outputs = true
+cache_text_encoder_outputs_to_disk = true
+convrot_int8 = true
+# 어텐션: flash = Flash Attention 2 (bf16·fp16 전용), torch = PyTorch SDPA
+attn_mode = "flash"
