@@ -55,7 +55,7 @@ try {
     New-Item -ItemType Directory -Force -Path $Tools | Out-Null
     $freeGb = [math]::Floor((Get-Item -LiteralPath $Root).PSDrive.Free / 1GB)
     Note "디스크 여유 공간: ${freeGb}GB"
-    if ($freeGb -lt 15) { Warn '설치에 약 12GB 가 필요합니다. 모델 파일은 약 27GB 가 더 필요합니다.' }
+    if ($freeGb -lt 15) { Warn '설치에 약 6GB 가 필요합니다. 모델 파일은 약 27GB 가 더 필요합니다.' }
     if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
         $previous = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
