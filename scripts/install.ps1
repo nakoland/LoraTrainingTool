@@ -111,6 +111,7 @@ try {
     Remove-Item -LiteralPath $wheel -Force
 
     Step 7 '설정 파일 만들기와 점검'
+    Run $Py @('-X', 'utf8', (Join-Path $PSScriptRoot 'patch_dataset.py'))
     foreach ($name in 'datasets', 'output', 'logs') { New-Item -ItemType Directory -Force -Path (Join-Path $Root $name) | Out-Null }
     $toolPath = $Root.Replace('\', '/')
     $utf8 = New-Object System.Text.UTF8Encoding($false)

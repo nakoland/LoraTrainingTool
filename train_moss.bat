@@ -21,7 +21,7 @@ goto collect
 :run
 cd /d "%ROOT%"
 "%ROOT%\venv\Scripts\python.exe" -m accelerate.commands.launch --num_cpu_threads_per_process 1 --num_processes 1 --num_machines 1 --mixed_precision bf16 --dynamo_backend no ^
-  moss_image_train_network.py --config_file "%CFG%" %EXTRA%
+  "%~dp0moss_train.py" --config_file "%CFG%" %EXTRA%
 set "RC=%ERRORLEVEL%"
 echo.
 echo exit code: %RC%
